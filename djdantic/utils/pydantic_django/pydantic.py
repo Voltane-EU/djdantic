@@ -1,10 +1,11 @@
-from typing import Mapping, Optional, Type, TypeVar, Union
+from typing import Any, Generator, Mapping, Optional, Tuple, Type, TypeVar, Union
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, validate_model
 from django.db import models
 from django.db.models.manager import Manager
 from djutils.asyncio import AllowAsyncUnsafe
 from ... import context
+from ..pydantic import get_orm_field_attr
 from .django_to_pydantic import transfer_from_orm
 
 
@@ -42,3 +43,18 @@ def orm_object_validator(model: Type[TDjangoModel], value: Union[str, models.Q])
 
         except model.DoesNotExist:
             raise ValueError('reference_not_exist')
+
+
+def get_sync_matching_values(model: BaseModel) -> Generator[Tuple[models.Field, Any], None, None]:
+    for name, field in model.__fields__.items():
+        if isinstance(field, BaseModel):
+            yield from get_sync_matching_values(field)
+
+        if not get_orm_field_attr(field.field_info, 'is_sync_matching_field'):
+            continue
+
+        yield (get_orm_field_attr(field.field_info, 'orm_field'), getattr(model, name))
+
+
+def get_sync_matching_filter(model: BaseModel) -> models.Q:
+    return models.Q(**{field.field.name: value for field, value in get_sync_matching_values(model)})

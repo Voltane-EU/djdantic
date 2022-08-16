@@ -1,9 +1,9 @@
-from functools import cached_property
-from types import FunctionType
 import typing
 from typing import Callable, ForwardRef, Optional, Type, Any
+from types import FunctionType
 from pydantic import BaseModel, create_model, Field
 from pydantic.fields import ModelField, FieldInfo, SHAPE_SINGLETON, SHAPE_LIST, Undefined
+from ..fields import ORMFieldInfo
 
 
 TypingGenericAlias = type(Any)
@@ -167,3 +167,25 @@ def include_reference(reference_key: str = '$rel', reference_params_key: str = '
         return model_with_rel(cls, None, __module__=cls.__module__, __parent__module__=cls.__base__.__module__)[0]
 
     return wrapped
+
+
+def is_orm_field_set(field: FieldInfo) -> bool:
+    if isinstance(field, ORMFieldInfo):
+        orm_field = field.orm_field
+        if orm_field is Undefined:
+            return False
+
+    else:
+        orm_field = field.extra.get('orm_field')
+        if 'orm_field' in field.extra and field.extra['orm_field'] is None:
+            # Do not raise error when orm_field was explicitly set to None
+            return False
+
+    return True
+
+
+def get_orm_field_attr(field: FieldInfo, key: str):
+    if isinstance(field, ORMFieldInfo):
+        return getattr(field, key)
+
+    return field.extra.get(key)

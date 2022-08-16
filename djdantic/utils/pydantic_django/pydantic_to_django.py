@@ -6,14 +6,17 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, validate_model, SecretStr
 from pydantic.fields import SHAPE_SINGLETON, SHAPE_LIST, Undefined
 from django.db import models
+from django.db.models.fields import Field as DjangoField
 from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
 from django.db.transaction import atomic
 from sentry_sdk import Hub
 from sentry_tools.decorators import instrument_span
 from async_tools import is_async, sync_to_async
 from ...schemas import Access
-from ..pydantic import Reference
+from ..pydantic import Reference, get_orm_field_attr, is_orm_field_set
+from .pydantic import get_sync_matching_filter
 from .checks import check_field_access
+from ...fields import ORMFieldInfo
 
 
 class TransferAction(Enum):
@@ -87,16 +90,21 @@ def transfer_to_orm(
 
     pydantic_values: Optional[dict] = pydantic_obj.dict(exclude_unset=True) if exclude_unset else None
 
-    def populate_default(pydantic_cls, django_obj):
+    def populate_default(pydantic_cls: BaseModel, django_obj):
         for key, field in pydantic_cls.__fields__.items():
-            orm_field = field.field_info.extra.get('orm_field')
+            orm_field = get_orm_field_attr(field.field_info, 'orm_field')
             if not orm_field and issubclass(field.type_, BaseModel):
                 populate_default(field.type_, django_obj)
 
             else:
-                if 'orm_field' in field.field_info.extra and field.field_info.extra['orm_field'] is None or field.field_info.extra.get('orm_method'):
-                    # Do not raise error when orm_field was explicitly set to None or orm_method is set
+                if not is_orm_field_set(field.field_info):
                     continue
+
+                if get_orm_field_attr(field.field_info, 'orm_method'):
+                    # Do not raise error when orm_method is set
+                    continue
+
+                orm_field: DjangoField = get_orm_field_attr(field.field_info, 'orm_field')
 
                 assert orm_field, "orm_field not set on %r of %r" % (field, pydantic_cls)
 
@@ -107,7 +115,7 @@ def transfer_to_orm(
                 )
 
     for key, field in pydantic_obj.__fields__.items():
-        orm_method = field.field_info.extra.get('orm_method')
+        orm_method = get_orm_field_attr(field.field_info, 'orm_method')
         if orm_method:
             if exclude_unset and key not in pydantic_values:
                 continue
@@ -119,14 +127,12 @@ def transfer_to_orm(
             orm_method(django_obj, value)
             continue
 
-        orm_field = field.field_info.extra.get('orm_field')
-        if not orm_field:
-            if 'orm_field' in field.field_info.extra and field.field_info.extra['orm_field'] is None:
-                # Do not raise error when orm_field was explicitly set to None
-                continue
+        if not is_orm_field_set(field.field_info):
+            continue
 
-            if not (field.shape == SHAPE_SINGLETON and issubclass(field.type_, BaseModel)):
-                raise AttributeError("orm_field not found on %r" % field)
+        orm_field = get_orm_field_attr(field.field_info, 'orm_field')
+        if not orm_field and not (field.shape == SHAPE_SINGLETON and issubclass(field.type_, BaseModel)):
+            raise AttributeError("orm_field not found on %r" % field)
 
         value = getattr(pydantic_obj, field.name)
         if field.shape == SHAPE_SINGLETON:
@@ -219,7 +225,8 @@ def transfer_to_orm(
                 val: BaseModel
                 for val in value:
                     def get_subobj(force_create: bool = False):
-                        if action == TransferAction.SYNC and not getattr(val, 'id', None) and not 'sync_matching' in field.field_info.extra:
+                        matching = get_orm_field_attr(field.field_info, 'sync_matching')  # TODO replace with get_sync_matching_filter(val)
+                        if action == TransferAction.SYNC and not getattr(val, 'id', None) and not matching:
                             force_create = True
 
                         if force_create or action == TransferAction.CREATE:
@@ -234,8 +241,7 @@ def transfer_to_orm(
                                 if getattr(val, 'id', None):
                                     return related_model.objects.get(id=val.id, **obj_fields)
 
-                                elif 'sync_matching' in field.field_info.extra:
-                                    matching = field.field_info.extra['sync_matching']
+                                elif matching:
                                     if isinstance(matching, list):
                                         matching_search = models.Q()
                                         pydantic_field_name: str

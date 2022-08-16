@@ -14,16 +14,20 @@ This project is currently in the alpha state, even though it can be used in prod
 
 ### pydantic to django Data Schema Conversion
 
-- `djdantic.utils.pydantic_django.DjangoORMBaseModel`  
+- `djdantic.BaseModel`  
   Provides `from_orm` method on pydantic schema
+- `djdantic.Field`  
+  Provides a custom implementation of pydantic's `Field`, used for the custom options
 - `djdantic.utils.pydantic_django.transfer_from_orm`
 - `djdantic.utils.pydantic_django.transfer_to_orm`
 
 If [automatic route generation](#automatic-route-generation) is used, it is not neccessary to use the `transfer_*` methods manually.
 
-#### Options for pydantic's `Field`
+#### Options for `djdantic.Field`
 
 For mapping pydantic schemas to django models, it is required to add at least one of the following extra arguments to each field defined in a pydantic schema.
+
+> Using these options on pydantic's `Field` is also possible but deprecated!
 
 - `orm_field`: `django.db.models.Field` *(required)*  
   Pointer (reference) to the corresponding model field, e. g. `myapp.models.MyModel.id`
@@ -33,24 +37,26 @@ For mapping pydantic schemas to django models, it is required to add at least on
   Limit access to specific fields based on jwt token scopes. For read operations, only scopes with the action `read` are taken into account, for write all other scopes are taken into account.
 - `is_critical`: `Optional[bool]`  
   Limit **write** access to the field based on the presence of the `crt` flag in the jwt token.
+- `is_sync_matching_field`: `Optional[bool]`  
+  Alternative to `sync_matching` to define search fields for the matcher on the field itself
 - `sync_matching`: `Optional[List[Tuple[str, django.db.models.Field]]]`  
-  Used for performing a `transfer_to_orm` with action `TransferAction.SYNC` for included sub-records (in a list), used when no `id` field is present on the object. Mapping from pydantic field (dot notation for nested fields can be used) to the corresponding django model field.
+  Used for performing a `transfer_to_orm` with action `TransferAction.SYNC` for included sub-records (in a list), used when no `id` field is present on the object. Mapping from pydantic field (dot notation for nested fields can be used) to the corresponding django model field.  
+  ⚠️ Deprecated in favor of `is_sync_matching_field`
 
 #### Example for Schemas
 
 ```python
-from pydantic import Field, BaseModel
-from djdantic.utils.pydantic_django import DjangoORMBaseModel
+from djdantic import Field, BaseModel
 from ... import models
 
 
-class User(DjangoORMBaseModel):
+class User(BaseModel):
     email: str = Field(orm_field=models.User.email)
     is_password_usable: bool = Field(orm_method=models.User.has_usable_password)
     is_superuser: bool = Field(scopes=['access.users.update.any'], is_critical=True, orm_field=models.User.is_superuser)
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(User):
     password: Optional[SecretStr] = Field(orm_method=models.User.set_password, is_critical=True)
 
 

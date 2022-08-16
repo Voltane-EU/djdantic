@@ -5,7 +5,7 @@ from typing import Coroutine, Mapping, Optional, Type, Union
 from contextvars import ContextVar
 from django.db.models.query_utils import DeferredAttribute
 from pydantic import BaseModel, parse_obj_as
-from pydantic.fields import ModelField, SHAPE_SINGLETON, SHAPE_LIST
+from pydantic.fields import ModelField, SHAPE_SINGLETON, SHAPE_LIST, Undefined
 from pydantic.types import ConstrainedStr
 from django.db import models
 from django.db.models.manager import Manager
@@ -17,6 +17,7 @@ from async_tools import is_async, sync_to_async
 from ...schemas import AccessScope
 from ...exceptions import AccessError
 from ... import context
+from ...fields import ORMFieldInfo
 
 
 transfer_current_obj: ContextVar[models.Model] = ContextVar('transfer_current_obj')
@@ -217,7 +218,7 @@ def _transfer_field_singleton(
         else:
             raise NotImplementedError
 
-    scopes = [AccessScope.from_str(audience) for audience in field.field_info.extra.get('scopes', [])]
+    scopes = [AccessScope.from_str(audience) for audience in (field.field_info.scopes if isinstance(field.field_info, ORMFieldInfo) else field.field_info.extra.get('scopes')) or []]
     if scopes:
         try:
             access = context.access.get()
@@ -263,7 +264,7 @@ def _transfer_field(
     pydantic_field_on_parent: Optional[ModelField] = None,
     filter_submodel: Optional[Mapping[Manager, models.Q]] = None,
 ):
-    orm_method = field.field_info.extra.get('orm_method')
+    orm_method = field.field_info.orm_method if isinstance(field.field_info, ORMFieldInfo) else field.field_info.extra.get('orm_method')
     if orm_method:
         return _compute_value_from_orm_method(
             orm_method=orm_method,
@@ -272,10 +273,16 @@ def _transfer_field(
             filter_submodel=filter_submodel,
         )
 
-    orm_field = field.field_info.extra.get('orm_field')
-    if 'orm_field' in field.field_info.extra and field.field_info.extra['orm_field'] is None:
-        # Do not raise error when orm_field was explicitly set to None
-        return ...
+    if isinstance(field.field_info, ORMFieldInfo):
+        orm_field = field.field_info.orm_field
+        if orm_field is Undefined:
+            return ...
+
+    else:
+        orm_field = field.field_info.extra.get('orm_field')
+        if 'orm_field' in field.field_info.extra and field.field_info.extra['orm_field'] is None:
+            # Do not raise error when orm_field was explicitly set to None
+            return ...
 
     if not orm_field and not (field.shape == SHAPE_SINGLETON and issubclass(field.type_, BaseModel)):
         raise AttributeError("orm_field not found on %r (parent: %r)" % (field, pydantic_field_on_parent))
