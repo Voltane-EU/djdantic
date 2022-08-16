@@ -57,4 +57,5 @@ def get_sync_matching_values(model: BaseModel) -> Generator[Tuple[models.Field, 
 
 
 def get_sync_matching_filter(model: BaseModel) -> models.Q:
-    return models.Q(**{field.field.name: value for field, value in get_sync_matching_values(model)})
+    fields = {field.field.name: value for field, value in get_sync_matching_values(model)} or {'id': model.id}
+    return models.Q(**fields)

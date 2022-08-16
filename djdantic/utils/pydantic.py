@@ -1,9 +1,9 @@
 import typing
 from typing import Callable, ForwardRef, Optional, Type, Any
 from types import FunctionType
-from pydantic import BaseModel, create_model, Field
+from pydantic import BaseModel, create_model, Field as Field
 from pydantic.fields import ModelField, FieldInfo, SHAPE_SINGLETON, SHAPE_LIST, Undefined
-from ..fields import ORMFieldInfo
+from ..fields import ORMFieldInfo, Field as ORMField
 
 
 TypingGenericAlias = type(Any)
@@ -19,6 +19,20 @@ def _new_field_from_model_field(
 
     if required is None and field.required and (default is Undefined or field.default is None):
         default = ...
+
+    if isinstance(field.field_info, ORMFieldInfo):
+        return ORMField(
+            default,
+            default_factory=field.default_factory,
+            alias=field.alias,
+            orm_field=field.field_info.orm_field,
+            orm_method=field.field_info.orm_method,
+            scopes=field.field_info.scopes,
+            is_critical=field.field_info.is_critical,
+            sync_matching=field.field_info.sync_matching,
+            is_sync_matching_field=field.field_info.is_sync_matching_field,
+            **field.field_info.extra,
+        )
 
     return Field(
         default,

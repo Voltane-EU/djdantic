@@ -17,16 +17,12 @@ class BaseModel(PydanticBaseModel):
     __orm_model: TDjangoModel
     __is_toplevel: bool
 
-    @validate_arguments(config=BaseModelValidateConfig)
     def __init_subclass__(cls, orm_model: Optional[Union[TDjangoModel, UndefinedType]] = None, **kwargs) -> None:
         cls.__orm_model = orm_model
         cls.__is_toplevel = cls.__qualname__ == cls.__name__
 
         if cls.__is_toplevel:
             cls.Config = type('Config', (), {'orm_mode': True})
-
-            if not cls.__orm_model:
-                warn("orm_model should be set on the top model class, or `pydantic.fields.Undefined` if unbound", stacklevel=7)
 
         return super().__init_subclass__(**kwargs)
 
