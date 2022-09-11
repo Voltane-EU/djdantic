@@ -1,6 +1,6 @@
 import os
 import warnings
-from typing import List, Optional, Tuple, Type
+from typing import Callable, List, Optional, Tuple, Type
 from enum import Enum
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, validate_model, SecretStr
@@ -9,6 +9,7 @@ from django.db import models
 from django.db.models.fields import Field as DjangoField
 from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
 from django.db.transaction import atomic
+from dirtyfields import DirtyFieldsMixin
 from sentry_sdk import Hub
 from sentry_tools.decorators import instrument_span
 from async_tools import is_async, sync_to_async
@@ -36,8 +37,9 @@ def transfer_to_orm(
     action: Optional[TransferAction] = None,
     exclude_unset: bool = False,
     access: Optional[Access] = None,
-    created_submodels: Optional[list] = None,
+    created_submodels: Optional[List[models.Model]] = None,
     _just_return_objs: bool = False,
+    do_not_save_if_no_change: bool = False,
 ) -> Optional[Tuple[List[models.Model], List[models.Model]]]:
     """
     Transfers the field contents of pydantic_obj to django_obj.
@@ -82,7 +84,7 @@ def transfer_to_orm(
     if not action:
         warnings.warn("Use transfer_to_orm with kwarg action", category=DeprecationWarning)
 
-    subobjects = created_submodels or []
+    subobjects: List[models.Model] = created_submodels or []
     existing_objects = []
 
     if access:
@@ -296,7 +298,9 @@ def transfer_to_orm(
 
     if action in (TransferAction.CREATE, TransferAction.SYNC, TransferAction.NO_SUBOBJECTS) and created_submodels is None:
         with atomic():
-            django_obj.save()
+            should_save: Callable[[models.Model], bool] = lambda obj: bool(not do_not_save_if_no_change or (isinstance(obj, DirtyFieldsMixin) and obj.get_dirty_fields(check_relationship=True)))
+            if should_save(django_obj):
+                django_obj.save()
 
             if action in (TransferAction.CREATE, TransferAction.SYNC):
                 if action == TransferAction.SYNC:
@@ -304,7 +308,8 @@ def transfer_to_orm(
                         obj.delete()
 
                 for obj in subobjects:
-                    obj.save()
+                    if should_save(obj):
+                        obj.save()
 
 
 async def update_orm(model: Type[BaseModel], orm_obj: models.Model, input: BaseModel, *, access: Optional[Access] = None) -> BaseModel:
