@@ -10,8 +10,8 @@ from django.db.models.fields import Field as DjangoField
 from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
 from django.db.transaction import atomic
 from dirtyfields import DirtyFieldsMixin
-from sentry_sdk import Hub
 from sentry_tools.decorators import instrument_span
+from sentry_tools.span import set_tag, set_data
 from async_tools import is_async, sync_to_async
 from ...schemas import Access
 from ..pydantic import Reference, get_orm_field_attr, is_orm_field_set
@@ -70,12 +70,11 @@ def transfer_to_orm(
             created_submodels=created_submodels,
         )
 
-    span = Hub.current.scope.span
-    span.set_tag('transfer_to_orm.action', action)
-    span.set_tag('transfer_to_orm.exclude_unset', exclude_unset)
-    span.set_data('transfer_to_orm.access', access)
-    span.set_data('transfer_to_orm.pydantic_obj', pydantic_obj)
-    span.set_data('transfer_to_orm.django_obj', django_obj)
+    set_tag('transfer_to_orm.action', action)
+    set_tag('transfer_to_orm.exclude_unset', exclude_unset)
+    set_data('transfer_to_orm.access', access)
+    set_data('transfer_to_orm.pydantic_obj', pydantic_obj)
+    set_data('transfer_to_orm.django_obj', django_obj)
 
     if created_submodels:
         warnings.warn("Use transfer_to_orm with kwarg action instead of created_submodels", category=DeprecationWarning)

@@ -11,8 +11,8 @@ from django.db import models
 from django.db.models.manager import Manager
 from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
 from django.utils.functional import cached_property
-from sentry_sdk import Hub
 from sentry_tools.decorators import instrument_span
+from sentry_tools.span import set_tag, set_data
 from async_tools import is_async, sync_to_async
 from ...schemas import AccessScope
 from ...exceptions import AccessError
@@ -314,12 +314,11 @@ def _transfer_from_orm(
     pydantic_field_on_parent: Optional[ModelField] = None,
     filter_submodel: Optional[Mapping[Manager, models.Q]] = None,
 ) -> Union[BaseModel, Coroutine[None, None, BaseModel]]:
-    span = Hub.current.scope.span
-    span.set_tag('transfer_from_orm.pydantic_cls', pydantic_cls.__name__)
-    span.set_tag('transfer_from_orm.django_cls', django_obj.__class__.__name__)
-    span.set_data('transfer_from_orm.django_obj', django_obj)
-    span.set_data('transfer_from_orm.django_parent_obj', django_parent_obj)
-    span.set_data('transfer_from_orm.filter_submodel', filter_submodel)
+    set_tag('transfer_from_orm.pydantic_cls', pydantic_cls.__name__)
+    set_tag('transfer_from_orm.django_cls', django_obj.__class__.__name__)
+    set_data('transfer_from_orm.django_obj', django_obj)
+    set_data('transfer_from_orm.django_parent_obj', django_parent_obj)
+    set_data('transfer_from_orm.filter_submodel', filter_submodel)
 
     transfer_current_obj.set(django_obj)
 
