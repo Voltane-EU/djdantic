@@ -7,13 +7,19 @@ from django.db import models
 from django.db.models.fields import Field as DjangoField
 from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
 from django.db.transaction import atomic
-from dirtyfields import DirtyFieldsMixin
 from sentry_tools.decorators import instrument_span
 from sentry_tools.span import set_tag, set_data
 from async_tools import is_async, sync_to_async
 from ...schemas import Access
 from ..pydantic import Reference, get_orm_field_attr, is_orm_field_set
 from .checks import check_field_access
+
+try:
+    from dirtyfields import DirtyFieldsMixin
+
+except ImportError:
+    class DirtyFieldsMixin:
+        pass
 
 try:
     from fastapi.exceptions import RequestValidationError
