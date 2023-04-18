@@ -1,8 +1,6 @@
-import os
 import warnings
 from typing import Callable, List, Optional, Tuple, Type
 from enum import Enum
-from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, validate_model, SecretStr
 from pydantic.fields import SHAPE_SINGLETON, SHAPE_LIST, Undefined
 from django.db import models
@@ -15,9 +13,13 @@ from sentry_tools.span import set_tag, set_data
 from async_tools import is_async, sync_to_async
 from ...schemas import Access
 from ..pydantic import Reference, get_orm_field_attr, is_orm_field_set
-from .pydantic import get_sync_matching_filter
 from .checks import check_field_access
-from ...fields import ORMFieldInfo
+
+try:
+    from fastapi.exceptions import RequestValidationError
+
+except ImportError:
+    from pydantic import ValidationError as RequestValidationError
 
 
 class TransferAction(Enum):
