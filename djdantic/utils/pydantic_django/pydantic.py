@@ -1,5 +1,4 @@
 from typing import Any, Generator, Mapping, Optional, Tuple, Type, TypeVar, Union
-from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, validate_model
 from django.db import models
 from django.db.models.manager import Manager
@@ -7,6 +6,12 @@ from djutils.asyncio import AllowAsyncUnsafe
 from ... import context
 from ..pydantic import get_orm_field_attr
 from .django_to_pydantic import transfer_from_orm
+
+try:
+    from fastapi.exceptions import RequestValidationError
+
+except ImportError:
+    from pydantic import ValidationError as RequestValidationError
 
 
 class DjangoORMBaseModel(BaseModel):
