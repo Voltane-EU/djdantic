@@ -168,7 +168,8 @@ def _transfer_field_singleton(
     pydantic_field_on_parent: Optional[ModelField] = None,
     filter_submodel: Optional[Mapping[Manager, models.Q]] = None,
 ):
-    if not orm_field and issubclass(field.type_, BaseModel):
+    is_object = issubclass(field.type_, BaseModel)
+    if not orm_field and is_object:
         return _transfer_from_orm(
             pydantic_cls=field.type_,
             django_obj=django_obj,
@@ -195,7 +196,7 @@ def _transfer_field_singleton(
                 value = value.pk
 
         else:
-            value = getattr(django_obj, orm_field.field.attname)
+            value = getattr(django_obj, orm_field.field.name) if is_object else getattr(django_obj, orm_field.field.attname)
 
     except AttributeError:
         raise  # attach debugger here ;)
@@ -203,8 +204,16 @@ def _transfer_field_singleton(
     if field.required and pydantic_field_on_parent and pydantic_field_on_parent.allow_none and value is None:
         raise Break(None)
 
+    if is_object and isinstance(value, models.Model):
+        return _transfer_from_orm(
+            pydantic_cls=field.type_,
+            django_obj=value,
+            pydantic_field_on_parent=field,
+            filter_submodel=filter_submodel,
+        )
+
     if is_django_field and value and isinstance(orm_field.field, models.JSONField):
-        if issubclass(field.type_, BaseModel):
+        if is_object:
             if isinstance(value, dict):
                 value = field.type_.parse_obj(value)
 
