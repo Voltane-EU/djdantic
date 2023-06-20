@@ -20,6 +20,10 @@ class Access(BaseModel):
     @property
     def user_id(self) -> str:
         return self.token.sub
+    
+    @property
+    def jti(self) -> str:
+        return self.token.jti
 
     @property
     def tenant_id(self) -> str:

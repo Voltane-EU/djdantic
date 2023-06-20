@@ -71,4 +71,17 @@ def get_field_type(field: models.Field):
     if isinstance(field, models.ForeignKey):
         field.model.__annotations__.get(field.name, field.related_model)
 
-    return field.model.__annotations__.get(field.name, FIELD_TYPE.get(type(field)))
+    field_type = type(field)
+    type_ = field.model.__annotations__.get(field.name, FIELD_TYPE.get(field_type))
+    if not type_:
+        for f, type_ in FIELD_TYPE.items():
+            if issubclass(field_type, f):
+                FIELD_TYPE[field_type] = type_
+
+            break
+
+        else:
+            type_ = None
+            FIELD_TYPE[field_type] = type_
+
+    return type_
