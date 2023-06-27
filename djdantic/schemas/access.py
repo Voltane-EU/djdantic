@@ -20,7 +20,7 @@ class Access(BaseModel):
     @property
     def user_id(self) -> str:
         return self.token.sub
-    
+
     @property
     def jti(self) -> str:
         return self.token.jti
@@ -69,12 +69,12 @@ class AccessToken(BaseModel):
 class AccessScope(BaseModel):
     service: str
     resource: str
-    action: str
+    action: Optional[str] = None
     selector: Optional[str] = None
 
     @classmethod
     def from_str(cls, scope: str):
-        scopes = scope.split('.') + [None]
+        scopes = scope.split('.') + [None, None]
         return cls(
             service=scopes[0],
             resource=scopes[1],
@@ -83,7 +83,17 @@ class AccessScope(BaseModel):
         )
 
     def __str__(self):
-        return '.'.join(filter(lambda s: s, [self.service, self.resource, self.action, self.selector,]))
+        return '.'.join(
+            filter(
+                lambda s: s,
+                [
+                    self.service,
+                    self.resource,
+                    self.action,
+                    self.selector,
+                ],
+            )
+        )
 
     def __hash__(self) -> int:
         return hash(self.__str__())

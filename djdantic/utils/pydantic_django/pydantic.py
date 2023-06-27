@@ -1,8 +1,8 @@
+import warnings
 from typing import Any, Generator, Mapping, Optional, Tuple, Type, TypeVar, Union
 from pydantic import BaseModel, validate_model
 from django.db import models
 from django.db.models.manager import Manager
-from djutils.asyncio import AllowAsyncUnsafe
 from ... import context
 from ..pydantic import get_orm_field_attr
 from .django_to_pydantic import transfer_from_orm
@@ -35,6 +35,7 @@ def validate_object(obj: BaseModel, is_request: bool = True):
 TDjangoModel = TypeVar('TDjangoModel', bound=models.Model)
 
 def orm_object_validator(model: Type[TDjangoModel], value: Union[str, models.Q]) -> TDjangoModel:
+    warnings.warn("orm_object_validator is deprecated", category=DeprecationWarning)
     if isinstance(value, str):
         value = models.Q(id=value)
 
@@ -42,6 +43,7 @@ def orm_object_validator(model: Type[TDjangoModel], value: Union[str, models.Q])
     if access and hasattr(model, 'tenant_id'):
         value &= models.Q(tenant_id=access.tenant_id)
 
+    from djutils.asyncio import AllowAsyncUnsafe
     with AllowAsyncUnsafe():
         try:
             return model.objects.get(value)
