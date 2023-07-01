@@ -96,22 +96,17 @@ def _compute_value_from_orm_method(
                 value = field.type_.parse_obj(value)
 
         elif field.shape == SHAPE_LIST:
-            def _to_pydantic(obj):
-                if isinstance(obj, BaseModel):
-                    return obj
-
-                if isinstance(obj, models.Model):
-                    return _transfer_from_orm(
-                        pydantic_cls=field.type_,
-                        django_obj=obj,
-                        django_parent_obj=django_obj,
-                        filter_submodel=filter_submodel,
-                    )
-
-                return field.type_.parse_obj(obj)
-
             value = [
-                _to_pydantic(obj)
+                obj
+                if isinstance(obj, BaseModel)
+                else _transfer_from_orm(
+                    pydantic_cls=field.type_,
+                    django_obj=obj,
+                    django_parent_obj=django_obj,
+                    filter_submodel=filter_submodel,
+                )
+                if isinstance(obj, models.Model)
+                else field.type_.parse_obj(obj)
                 for obj in value
             ]
 
@@ -131,7 +126,9 @@ def _transfer_field_list(
 
     if isinstance(orm_field, ManyToManyDescriptor):
         relatedmanager = getattr(django_obj, orm_field.field.attname)
-        related_objs = relatedmanager.through.objects.filter(models.Q(**{relatedmanager.source_field_name: relatedmanager.instance}) & sub_filter)
+        related_objs = relatedmanager.through.objects.filter(
+            models.Q(**{relatedmanager.source_field_name: relatedmanager.instance}) & sub_filter
+        )
 
     elif isinstance(orm_field, ReverseManyToOneDescriptor):
         relatedmanager = getattr(django_obj, orm_field.rel.name)
@@ -150,6 +147,12 @@ def _transfer_field_list(
     else:
         raise NotImplementedError
 
+    if (
+        isinstance(orm_field, (ManyToManyDescriptor, ReverseManyToOneDescriptor))
+        and relatedmanager.through._meta.auto_created
+    ):
+        related_objs = [getattr(obj, relatedmanager.target_field_name) for obj in related_objs]
+
     return [
         _transfer_from_orm(
             pydantic_cls=field.type_,
@@ -157,7 +160,8 @@ def _transfer_field_list(
             django_parent_obj=django_obj,
             pydantic_field_on_parent=field,
             filter_submodel=filter_submodel,
-        ) for rel_obj in related_objs
+        )
+        for rel_obj in related_objs
     ]
 
 
@@ -196,7 +200,9 @@ def _transfer_field_singleton(
                 value = value.pk
 
         else:
-            value = getattr(django_obj, orm_field.field.name) if is_object else getattr(django_obj, orm_field.field.attname)
+            value = (
+                getattr(django_obj, orm_field.field.name) if is_object else getattr(django_obj, orm_field.field.attname)
+            )
 
     except AttributeError:
         raise  # attach debugger here ;)
@@ -227,7 +233,15 @@ def _transfer_field_singleton(
         else:
             raise NotImplementedError
 
-    scopes = [AccessScope.from_str(audience) for audience in (field.field_info.scopes if isinstance(field.field_info, ORMFieldInfo) else field.field_info.extra.get('scopes')) or []]
+    scopes = [
+        AccessScope.from_str(audience)
+        for audience in (
+            field.field_info.scopes
+            if isinstance(field.field_info, ORMFieldInfo)
+            else field.field_info.extra.get('scopes')
+        )
+        or []
+    ]
     if scopes:
         try:
             access = context.access.get()
@@ -241,7 +255,9 @@ def _transfer_field_singleton(
                 _value = None
                 if not field.allow_none:
                     if issubclass(field.type_, str):
-                        _value = '•' * (field.type_.max_length if issubclass(field.type_, ConstrainedStr) else len(value))
+                        _value = '•' * (
+                            field.type_.max_length if issubclass(field.type_, ConstrainedStr) else len(value)
+                        )
 
                     elif issubclass(field.type_, (int, float, Decimal)):
                         _value = 0
@@ -273,7 +289,11 @@ def _transfer_field(
     pydantic_field_on_parent: Optional[ModelField] = None,
     filter_submodel: Optional[Mapping[Manager, models.Q]] = None,
 ):
-    orm_method = field.field_info.orm_method if isinstance(field.field_info, ORMFieldInfo) else field.field_info.extra.get('orm_method')
+    orm_method = (
+        field.field_info.orm_method
+        if isinstance(field.field_info, ORMFieldInfo)
+        else field.field_info.extra.get('orm_method')
+    )
     if orm_method:
         return _compute_value_from_orm_method(
             orm_method=orm_method,
