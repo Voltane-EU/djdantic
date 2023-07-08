@@ -1,7 +1,6 @@
-from decimal import Decimal
-import os
 import json
-from typing import Coroutine, Mapping, Optional, Type, Union
+from decimal import Decimal
+from typing import Coroutine, Mapping, Optional, Type, Union, List
 from contextvars import ContextVar
 from django.db.models.query_utils import DeferredAttribute
 from pydantic import BaseModel, parse_obj_as
@@ -37,7 +36,7 @@ def transfer_from_orm(
     pydantic_cls: Type[BaseModel],
     django_obj: models.Model,
     django_parent_obj: Optional[models.Model] = None,
-    pydantic_field_on_parent: Optional[ModelField] = None,
+    parent_fields: Optional[List[ModelField]] = None,
     filter_submodel: Optional[Mapping[Manager, models.Q]] = None,
 ) -> Union[BaseModel, Coroutine[None, None, BaseModel]]:
     """
@@ -64,7 +63,7 @@ def transfer_from_orm(
             pydantic_cls=pydantic_cls,
             django_obj=django_obj,
             django_parent_obj=django_parent_obj,
-            pydantic_field_on_parent=pydantic_field_on_parent,
+            parent_fields=parent_fields,
             filter_submodel=filter_submodel,
         )
 
@@ -72,7 +71,7 @@ def transfer_from_orm(
         pydantic_cls=pydantic_cls,
         django_obj=django_obj,
         django_parent_obj=django_parent_obj,
-        pydantic_field_on_parent=pydantic_field_on_parent,
+        parent_fields=parent_fields,
         filter_submodel=filter_submodel,
     )
 
@@ -158,7 +157,7 @@ def _transfer_field_list(
             pydantic_cls=field.type_,
             django_obj=rel_obj,
             django_parent_obj=django_obj,
-            pydantic_field_on_parent=field,
+            parent_fields=[field],
             filter_submodel=filter_submodel,
         )
         for rel_obj in related_objs
@@ -169,15 +168,16 @@ def _transfer_field_singleton(
     field: ModelField,
     orm_field,
     django_obj: models.Model,
-    pydantic_field_on_parent: Optional[ModelField] = None,
+    parent_fields: Optional[List[ModelField]] = None,
     filter_submodel: Optional[Mapping[Manager, models.Q]] = None,
 ):
+    parent_fields = parent_fields or []
     is_object = issubclass(field.type_, BaseModel)
     if not orm_field and is_object:
         return _transfer_from_orm(
             pydantic_cls=field.type_,
             django_obj=django_obj,
-            pydantic_field_on_parent=field,
+            parent_fields=parent_fields + [field],
             filter_submodel=filter_submodel,
         )
 
@@ -207,14 +207,16 @@ def _transfer_field_singleton(
     except AttributeError:
         raise  # attach debugger here ;)
 
-    if field.required and pydantic_field_on_parent and pydantic_field_on_parent.allow_none and value is None:
-        raise Break(None)
+    if field.required and value is None and parent_fields:
+        for field in parent_fields[::-1]:
+            if field.allow_none:
+                raise Break(None)
 
     if is_object and isinstance(value, models.Model):
         return _transfer_from_orm(
             pydantic_cls=field.type_,
             django_obj=value,
-            pydantic_field_on_parent=field,
+            parent_fields=parent_fields + [field],
             filter_submodel=filter_submodel,
         )
 
@@ -286,7 +288,7 @@ def _transfer_field_singleton(
 def _transfer_field(
     field: ModelField,
     django_obj: models.Model,
-    pydantic_field_on_parent: Optional[ModelField] = None,
+    parent_fields: Optional[List[ModelField]] = None,
     filter_submodel: Optional[Mapping[Manager, models.Q]] = None,
 ):
     orm_method = (
@@ -314,7 +316,7 @@ def _transfer_field(
             return ...
 
     if not orm_field and not (field.shape == SHAPE_SINGLETON and issubclass(field.type_, BaseModel)):
-        raise AttributeError("orm_field not found on %r (parent: %r)" % (field, pydantic_field_on_parent))
+        raise AttributeError("orm_field not found on %r (parents: %r)" % (field, parent_fields))
 
     if field.shape == SHAPE_SINGLETON:
         return _transfer_field_singleton(
@@ -322,7 +324,7 @@ def _transfer_field(
             orm_field=orm_field,
             django_obj=django_obj,
             filter_submodel=filter_submodel,
-            pydantic_field_on_parent=pydantic_field_on_parent,
+            parent_fields=parent_fields,
         )
 
     if field.shape == SHAPE_LIST:
@@ -340,7 +342,7 @@ def _transfer_from_orm(
     pydantic_cls: Type[BaseModel],
     django_obj: models.Model,
     django_parent_obj: Optional[models.Model] = None,
-    pydantic_field_on_parent: Optional[ModelField] = None,
+    parent_fields: Optional[List[ModelField]] = None,
     filter_submodel: Optional[Mapping[Manager, models.Q]] = None,
 ) -> Union[BaseModel, Coroutine[None, None, BaseModel]]:
     set_tag('transfer_from_orm.pydantic_cls', pydantic_cls.__name__)
@@ -358,18 +360,21 @@ def _transfer_from_orm(
             value = _transfer_field(
                 field=field,
                 django_obj=django_obj,
-                pydantic_field_on_parent=pydantic_field_on_parent,
+                parent_fields=parent_fields,
                 filter_submodel=filter_submodel,
             )
 
         except Break as break_:
-            # The whole object should be None
-            return break_.args[0]
+            if field.allow_none:
+                # The whole object should be None
+                value = break_.args[0]
 
-        else:
-            if value is ...:
-                continue
+            else:
+                raise
 
-            values[field.name] = value
+        if value is ...:
+            continue
+
+        values[field.name] = value
 
     return pydantic_cls.construct(**values)
