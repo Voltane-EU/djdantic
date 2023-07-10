@@ -1,8 +1,9 @@
 import warnings
 from typing import Callable, List, Optional, Tuple, Type
 from enum import Enum
-from pydantic import BaseModel, validate_model, SecretStr
-from pydantic.fields import SHAPE_SINGLETON, SHAPE_LIST, Undefined
+from pydantic import BaseModel, SecretStr
+from pydantic.v1 import validate_model
+from pydantic.v1.fields import SHAPE_SINGLETON, SHAPE_LIST, Undefined
 from django.db import models
 from django.db.models.fields import Field as DjangoField
 from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor

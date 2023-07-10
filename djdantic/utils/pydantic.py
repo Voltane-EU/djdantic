@@ -2,7 +2,8 @@ import typing
 from typing import Callable, ForwardRef, Optional, Type, Any
 from types import FunctionType
 from pydantic import BaseModel, create_model, Field as Field
-from pydantic.fields import ModelField, FieldInfo, SHAPE_SINGLETON, SHAPE_LIST, Undefined
+from pydantic.fields import FieldInfo
+from pydantic.v1.fields import ModelField, SHAPE_SINGLETON, SHAPE_LIST, Undefined
 from ..fields import ORMFieldInfo, Field as ORMField
 
 

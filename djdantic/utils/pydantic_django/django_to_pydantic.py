@@ -3,9 +3,9 @@ from decimal import Decimal
 from typing import Coroutine, Mapping, Optional, Type, Union, List
 from contextvars import ContextVar
 from django.db.models.query_utils import DeferredAttribute
-from pydantic import BaseModel, parse_obj_as
-from pydantic.fields import ModelField, SHAPE_SINGLETON, SHAPE_LIST, Undefined
-from pydantic.types import ConstrainedStr
+from pydantic import BaseModel, TypeAdapter
+from pydantic.v1.fields import ModelField, SHAPE_SINGLETON, SHAPE_LIST, Undefined
+from pydantic.v1.types import ConstrainedStr
 from django.db import models
 from django.db.models.manager import Manager
 from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
@@ -141,7 +141,8 @@ def _transfer_field_list(
         except AttributeError:
             raise  # attach debugger here ;)
 
-        return parse_obj_as(field.outer_type_, value or [])
+        adapter = TypeAdapter(field.outer_type_)
+        return adapter.validate_python(value or [])
 
     else:
         raise NotImplementedError

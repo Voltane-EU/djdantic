@@ -1,5 +1,5 @@
 from decimal import Decimal
-from pydantic import BaseModel, validator
+from pydantic import field_validator, BaseModel
 
 
 TWO_PLACES = Decimal(10) ** -2
@@ -14,6 +14,7 @@ class AmountPrecision(BaseModel):
 
 
 class Amount(AmountPrecision):
-    @validator('gross', 'net')
+    @field_validator('gross', 'net')
+    @classmethod
     def _round_amount(cls, value: Decimal):
         return value.quantize(TWO_PLACES)

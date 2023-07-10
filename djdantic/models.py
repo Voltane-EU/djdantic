@@ -1,8 +1,8 @@
 from typing import Optional, Mapping, TypeVar, Union
 from enum import Enum
 from django.db.models import Model as DjangoModel, Q, Manager
-from pydantic import BaseModel as PydanticBaseModel, validate_arguments
-from pydantic.fields import UndefinedType
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic.v1.fields import UndefinedType
 from .utils.pydantic_django import transfer_from_orm
 
 
@@ -20,8 +20,8 @@ class BaseModelValidateConfig:
 
 
 class BaseModel(PydanticBaseModel):
-    _kind: Optional[ModelKind]
-    _orm_model: Optional[TDjangoModel]
+    _kind: Optional[ModelKind] = None
+    _orm_model: Optional[TDjangoModel] = None
     _is_toplevel: bool
 
     def __init_subclass__(cls, orm_model: Optional[Union[TDjangoModel, UndefinedType]] = None, kind: Optional[ModelKind] = None, **kwargs) -> None:

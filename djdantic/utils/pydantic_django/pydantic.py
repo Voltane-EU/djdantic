@@ -1,6 +1,7 @@
 import warnings
 from typing import Any, Generator, Mapping, Optional, Tuple, Type, TypeVar, Union
-from pydantic import BaseModel, validate_model
+from pydantic import ConfigDict, BaseModel
+from pydantic.v1 import validate_model
 from django.db import models
 from django.db.models.manager import Manager
 from ... import context
@@ -18,9 +19,7 @@ class DjangoORMBaseModel(BaseModel):
     @classmethod
     def from_orm(cls, obj: models.Model, filter_submodel: Optional[Mapping[Manager, models.Q]] = None):
         return transfer_from_orm(cls, obj, filter_submodel=filter_submodel)
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 def validate_object(obj: BaseModel, is_request: bool = True):

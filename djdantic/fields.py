@@ -1,6 +1,6 @@
 from typing import Any, Callable, List, Tuple, Union, Optional, TYPE_CHECKING
-from pydantic.fields import FieldInfo, Undefined, UndefinedType
-from pydantic.typing import NoArgAnyCallable
+from pydantic.v1.fields import FieldInfo, Undefined, UndefinedType
+from pydantic.v1.typing import NoArgAnyCallable
 from django.db.models.fields import Field as DjangoField
 
 if TYPE_CHECKING:
