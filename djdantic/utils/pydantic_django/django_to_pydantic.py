@@ -148,6 +148,7 @@ def _transfer_field_list(
 
     if (
         isinstance(orm_field, (ManyToManyDescriptor, ReverseManyToOneDescriptor))
+        and hasattr(relatedmanager, 'through')
         and relatedmanager.through._meta.auto_created
     ):
         related_objs = [getattr(obj, relatedmanager.target_field_name) for obj in related_objs]
