@@ -18,8 +18,10 @@ try:
     from dirtyfields import DirtyFieldsMixin
 
 except ImportError:
+
     class DirtyFieldsMixin:
         pass
+
 
 try:
     from fastapi.exceptions import RequestValidationError
@@ -32,6 +34,78 @@ class TransferAction(Enum):
     CREATE = 'CREATE'
     SYNC = 'SYNC'
     NO_SUBOBJECTS = 'NO_SUBOBJECTS'
+
+
+def get_subobj_method_1(val, obj_fields, action, related_model, relatedmanager, force_create: bool = False):
+    obj_manytomany_fields = {**obj_fields}
+    if getattr(val, 'id', None):
+        obj_manytomany_fields[relatedmanager.target_field.attname] = val.id
+
+    else:
+        raise NotImplementedError
+
+    if force_create or action == TransferAction.CREATE:
+        return related_model(**obj_manytomany_fields)
+
+    elif action == TransferAction.SYNC:
+        try:
+            return related_model.objects.get(**obj_manytomany_fields)
+
+        except related_model.DoesNotExist:
+            return get_subobj_method_1(val, obj_fields, action, related_model, relatedmanager, force_create=True)
+
+    else:
+        raise NotImplementedError
+
+
+def get_subobj_method_2(val, obj_fields, action, related_model, field, force_create: bool = False):
+    matching = get_orm_field_attr(field.field_info, 'sync_matching')  # TODO replace with get_sync_matching_filter(val)
+    if action == TransferAction.SYNC and not getattr(val, 'id', None) and not matching:
+        force_create = True
+
+    if force_create or action == TransferAction.CREATE:
+        create_fields = {}
+        if getattr(val, 'id', None):
+            create_fields['id'] = getattr(val, 'id', None)
+
+        return related_model(**obj_fields, **create_fields)
+
+    elif action == TransferAction.SYNC:
+        try:
+            if getattr(val, 'id', None):
+                return related_model.objects.get(id=val.id, **obj_fields)
+
+            elif matching:
+                if isinstance(matching, list):
+                    matching_search = models.Q()
+                    pydantic_field_name: str
+                    match_orm_field: models.Field
+                    for pydantic_field_name, match_orm_field in matching:
+                        match_value = val
+                        for _field in pydantic_field_name.split('.'):
+                            match_value = getattr(match_value, _field)
+
+                        if isinstance(match_value, Reference):
+                            match_value = match_value.id
+
+                        matching_search &= models.Q(**{match_orm_field.field.attname: match_value})
+
+                    return related_model.objects.filter(**obj_fields).get(matching_search)
+
+                elif isinstance(matching, callable):
+                    raise NotImplementedError
+
+                else:
+                    raise NotImplementedError
+
+            else:
+                raise NotImplementedError
+
+        except related_model.DoesNotExist:
+            return get_subobj_method_2(val, obj_fields, action, related_model, field, force_create=True)
+
+    else:
+        raise NotImplementedError
 
 
 @instrument_span(
@@ -120,7 +194,9 @@ def transfer_to_orm(
                 setattr(
                     django_obj,
                     orm_field.field.attname,
-                    field.field_info.default if field.field_info.default is not Undefined and field.field_info.default is not ... else None,
+                    field.field_info.default
+                    if field.field_info.default is not Undefined and field.field_info.default is not ...
+                    else None,
                 )
 
     for key, field in pydantic_obj.__fields__.items():
@@ -153,7 +229,14 @@ def transfer_to_orm(
                     populate_default(field.type_, django_obj)
 
                 elif isinstance(value, BaseModel):
-                    sub_transfer = transfer_to_orm(pydantic_obj=value, django_obj=django_obj, exclude_unset=exclude_unset, access=access, action=action, _just_return_objs=True)
+                    sub_transfer = transfer_to_orm(
+                        pydantic_obj=value,
+                        django_obj=django_obj,
+                        exclude_unset=exclude_unset,
+                        access=access,
+                        action=action,
+                        _just_return_objs=True,
+                    )
                     subobjects += sub_transfer[0]
                     existing_objects += sub_transfer[1]
 
@@ -183,116 +266,54 @@ def transfer_to_orm(
             if not value:
                 continue
 
-            elif isinstance(orm_field, ManyToManyDescriptor):
+            if isinstance(orm_field, ManyToManyDescriptor):
+                method = 1
+
                 relatedmanager = getattr(django_obj, orm_field.field.attname)
                 related_model = relatedmanager.through
                 obj_fields = {relatedmanager.source_field_name: django_obj}
-                existing_object_ids = set()
-                if action == TransferAction.SYNC:
-                    existing_object_ids = set(related_model.objects.filter(**obj_fields).values_list('id', flat=True))
-
-                for val in value:
-                    def get_subobj(force_create: bool = False):
-                        obj_manytomany_fields = {**obj_fields}
-                        if getattr(val, 'id', None):
-                            obj_manytomany_fields[relatedmanager.target_field.attname] = val.id
-
-                        else:
-                            raise NotImplementedError
-
-                        if force_create or action == TransferAction.CREATE:
-                            return related_model(**obj_manytomany_fields)
-
-                        elif action == TransferAction.SYNC:
-                            try:
-                                return related_model.objects.get(**obj_manytomany_fields)
-
-                            except related_model.DoesNotExist:
-                                return get_subobj(force_create=True)
-
-                        else:
-                            raise NotImplementedError
-
-                    sub_obj = get_subobj()
-                    existing_object_ids.discard(sub_obj.id)
-                    subobjects.append(sub_obj)
-                    sub_transfer = transfer_to_orm(val, sub_obj, exclude_unset=exclude_unset, access=access, action=action, _just_return_objs=True)
-                    subobjects += sub_transfer[0]
-                    existing_objects += sub_transfer[1]
-
-                existing_objects += related_model.objects.filter(id__in=list(existing_object_ids))
 
             elif isinstance(orm_field, ReverseManyToOneDescriptor):
+                method = 2
+
                 relatedmanager = getattr(django_obj, orm_field.rel.name)
                 related_model: Type[models.Model] = relatedmanager.field.model
                 obj_fields = {relatedmanager.field.name: django_obj}
 
-                existing_object_ids = set()
-                if action == TransferAction.SYNC:
-                    existing_object_ids = set(related_model.objects.filter(**obj_fields).values_list('id', flat=True))
-
-                val: BaseModel
-                for val in value:
-                    def get_subobj(force_create: bool = False):
-                        matching = get_orm_field_attr(field.field_info, 'sync_matching')  # TODO replace with get_sync_matching_filter(val)
-                        if action == TransferAction.SYNC and not getattr(val, 'id', None) and not matching:
-                            force_create = True
-
-                        if force_create or action == TransferAction.CREATE:
-                            create_fields = {}
-                            if getattr(val, 'id', None):
-                                create_fields['id'] = getattr(val, 'id', None)
-
-                            return related_model(**obj_fields, **create_fields)
-
-                        elif action == TransferAction.SYNC:
-                            try:
-                                if getattr(val, 'id', None):
-                                    return related_model.objects.get(id=val.id, **obj_fields)
-
-                                elif matching:
-                                    if isinstance(matching, list):
-                                        matching_search = models.Q()
-                                        pydantic_field_name: str
-                                        match_orm_field: models.Field
-                                        for pydantic_field_name, match_orm_field in matching:
-                                            match_value = val
-                                            for _field in pydantic_field_name.split('.'):
-                                                match_value = getattr(match_value, _field)
-
-                                            if isinstance(match_value, Reference):
-                                                match_value = match_value.id
-
-                                            matching_search &= models.Q(**{match_orm_field.field.attname: match_value})
-
-                                        return related_model.objects.filter(**obj_fields).get(matching_search)
-
-                                    elif isinstance(matching, callable):
-                                        raise NotImplementedError
-
-                                    else:
-                                        raise NotImplementedError
-
-                                else:
-                                    raise NotImplementedError
-
-                            except related_model.DoesNotExist:
-                                return get_subobj(force_create=True)
-
-                        else:
-                            raise NotImplementedError
-
-                    sub_obj = get_subobj()
-                    existing_object_ids.discard(sub_obj.id)
-                    subobjects.append(sub_obj)
-                    sub_transfer = transfer_to_orm(val, sub_obj, exclude_unset=exclude_unset, access=access, action=action, _just_return_objs=True)
-                    subobjects += sub_transfer[0]
-                    existing_objects += sub_transfer[1]
-
-                existing_objects += related_model.objects.filter(id__in=list(existing_object_ids))
-
             else:
                 raise NotImplementedError
+
+            if hasattr(relatedmanager, 'through') and relatedmanager.through._meta.auto_created:
+                raise NotImplementedError
+
+            existing_object_ids = set()
+            if action == TransferAction.SYNC:
+                existing_object_ids = set(related_model.objects.filter(**obj_fields).values_list('id', flat=True))
+
+            val: BaseModel
+
+            if method == 1:
+                get_subobj = lambda: get_subobj_method_1(val, obj_fields, action, related_model, relatedmanager)
+
+            elif method == 2:
+                get_subobj = lambda: get_subobj_method_2(val, obj_fields, action, related_model, field)
+
+            for val in value:
+                sub_obj = get_subobj()
+                existing_object_ids.discard(sub_obj.id)
+                subobjects.append(sub_obj)
+                sub_transfer = transfer_to_orm(
+                    val,
+                    sub_obj,
+                    exclude_unset=exclude_unset,
+                    access=access,
+                    action=action,
+                    _just_return_objs=True,
+                )
+                subobjects += sub_transfer[0]
+                existing_objects += sub_transfer[1]
+
+            existing_objects += related_model.objects.filter(id__in=list(existing_object_ids))
 
         else:
             raise NotImplementedError
@@ -303,9 +324,15 @@ def transfer_to_orm(
     if _just_return_objs:
         return subobjects, existing_objects
 
-    if action in (TransferAction.CREATE, TransferAction.SYNC, TransferAction.NO_SUBOBJECTS) and created_submodels is None:
+    if (
+        action in (TransferAction.CREATE, TransferAction.SYNC, TransferAction.NO_SUBOBJECTS)
+        and created_submodels is None
+    ):
         with atomic():
-            should_save: Callable[[models.Model], bool] = lambda obj: bool(not do_not_save_if_no_change or (isinstance(obj, DirtyFieldsMixin) and obj.get_dirty_fields(check_relationship=True)))
+            should_save: Callable[[models.Model], bool] = lambda obj: bool(
+                not do_not_save_if_no_change
+                or (isinstance(obj, DirtyFieldsMixin) and obj.get_dirty_fields(check_relationship=True))
+            )
             if should_save(django_obj):
                 django_obj.save()
 
@@ -319,7 +346,9 @@ def transfer_to_orm(
                         obj.save()
 
 
-async def update_orm(model: Type[BaseModel], orm_obj: models.Model, input: BaseModel, *, access: Optional[Access] = None) -> BaseModel:
+async def update_orm(
+    model: Type[BaseModel], orm_obj: models.Model, input: BaseModel, *, access: Optional[Access] = None
+) -> BaseModel:
     """
     Apply (partial) changes given in `input` to an orm_obj and return an instance of `model` with the full data of the orm including the updated fields.
     """
