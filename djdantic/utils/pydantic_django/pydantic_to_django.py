@@ -1,7 +1,9 @@
 import warnings
-from typing import Callable, List, Optional, Tuple, Type
+from typing import Callable, List, Optional, Tuple, Type, Dict
+from functools import partial
+from collections import defaultdict
 from enum import Enum
-from pydantic import BaseModel, validate_model, SecretStr
+from pydantic import BaseModel, validate_model, SecretStr, Field
 from pydantic.fields import SHAPE_SINGLETON, SHAPE_LIST, Undefined
 from django.db import models
 from django.db.models.fields import Field as DjangoField
@@ -12,6 +14,7 @@ from sentry_tools.span import set_tag, set_data
 from async_tools import is_async, sync_to_async
 from ...schemas import Access
 from ..pydantic import Reference, get_orm_field_attr, is_orm_field_set
+from .pydantic import get_sync_matching_filter
 from .checks import check_field_access
 
 try:
@@ -36,7 +39,38 @@ class TransferAction(Enum):
     NO_SUBOBJECTS = 'NO_SUBOBJECTS'
 
 
-def get_subobj_method_1(val, obj_fields, action, related_model, relatedmanager, force_create: bool = False):
+def get_subobj_many_to_many(
+    val: BaseModel,
+    action: TransferAction,
+    related_model: Type[models.Model],
+    relatedmanager: models.Manager,
+    force_create: bool = False,
+):
+    q_filter = models.Q()
+    if getattr(val, 'id', None):
+        q_filter &= models.Q(**{'pk': val.id})
+
+    elif matching := get_sync_matching_filter(val, related_model):
+        q_filter &= matching
+
+    else:
+        raise NotImplementedError
+
+    try:
+        return related_model.objects.get(q_filter)
+
+    except related_model.DoesNotExist:
+        return related_model()
+
+
+def get_subobj_many_to_many_with_intermediate(
+    val: BaseModel,
+    obj_fields: Dict[str, models.Model],
+    action: TransferAction,
+    related_model: Type[models.Model],
+    relatedmanager: models.Manager,
+    force_create: bool = False,
+):
     obj_manytomany_fields = {**obj_fields}
     if getattr(val, 'id', None):
         obj_manytomany_fields[relatedmanager.target_field.attname] = val.id
@@ -52,13 +86,27 @@ def get_subobj_method_1(val, obj_fields, action, related_model, relatedmanager, 
             return related_model.objects.get(**obj_manytomany_fields)
 
         except related_model.DoesNotExist:
-            return get_subobj_method_1(val, obj_fields, action, related_model, relatedmanager, force_create=True)
+            return get_subobj_many_to_many_with_intermediate(
+                val,
+                obj_fields,
+                action,
+                related_model,
+                relatedmanager,
+                force_create=True,
+            )
 
     else:
         raise NotImplementedError
 
 
-def get_subobj_method_2(val, obj_fields, action, related_model, field, force_create: bool = False):
+def get_subobj_rev_many_to_one(
+    val: BaseModel,
+    obj_fields: Dict[str, models.Model],
+    action: TransferAction,
+    related_model: Type[models.Model],
+    field: Field,
+    force_create: bool = False,
+):
     matching = get_orm_field_attr(field.field_info, 'sync_matching')  # TODO replace with get_sync_matching_filter(val)
     if action == TransferAction.SYNC and not getattr(val, 'id', None) and not matching:
         force_create = True
@@ -102,7 +150,7 @@ def get_subobj_method_2(val, obj_fields, action, related_model, field, force_cre
                 raise NotImplementedError
 
         except related_model.DoesNotExist:
-            return get_subobj_method_2(val, obj_fields, action, related_model, field, force_create=True)
+            return get_subobj_rev_many_to_one(val, obj_fields, action, related_model, field, force_create=True)
 
     else:
         raise NotImplementedError
@@ -167,6 +215,7 @@ def transfer_to_orm(
 
     subobjects: List[models.Model] = created_submodels or []
     existing_objects = []
+    many_to_many_objs = defaultdict(list)
 
     if access:
         check_field_access(pydantic_obj, access)
@@ -266,24 +315,49 @@ def transfer_to_orm(
             if not value:
                 continue
 
-            if isinstance(orm_field, ManyToManyDescriptor):
-                method = 1
+            is_direct_m2m = False
+            related_model: Type[models.Model]
+            relatedmanager: models.Manager
 
+            if isinstance(orm_field, ManyToManyDescriptor):
                 relatedmanager = getattr(django_obj, orm_field.field.attname)
-                related_model = relatedmanager.through
-                obj_fields = {relatedmanager.source_field_name: django_obj}
+
+                if hasattr(relatedmanager, 'through') and relatedmanager.through._meta.auto_created:
+                    obj_fields = relatedmanager.core_filters
+                    related_model = relatedmanager.model
+                    get_subobj = partial(
+                        get_subobj_many_to_many,
+                        action=action,
+                        related_model=related_model,
+                        relatedmanager=relatedmanager,
+                    )
+                    is_direct_m2m = True
+
+                else:
+                    obj_fields = {relatedmanager.source_field_name: django_obj}
+                    related_model = relatedmanager.through
+                    get_subobj = partial(
+                        get_subobj_many_to_many_with_intermediate,
+                        obj_fields=obj_fields,
+                        action=action,
+                        related_model=related_model,
+                        relatedmanager=relatedmanager,
+                    )
 
             elif isinstance(orm_field, ReverseManyToOneDescriptor):
-                method = 2
-
                 relatedmanager = getattr(django_obj, orm_field.rel.name)
-                related_model: Type[models.Model] = relatedmanager.field.model
+                related_model = relatedmanager.field.model
                 obj_fields = {relatedmanager.field.name: django_obj}
 
-            else:
-                raise NotImplementedError
+                get_subobj = partial(
+                    get_subobj_rev_many_to_one,
+                    obj_fields=obj_fields,
+                    action=action,
+                    related_model=related_model,
+                    field=field,
+                )
 
-            if hasattr(relatedmanager, 'through') and relatedmanager.through._meta.auto_created:
+            else:
                 raise NotImplementedError
 
             existing_object_ids = set()
@@ -291,15 +365,8 @@ def transfer_to_orm(
                 existing_object_ids = set(related_model.objects.filter(**obj_fields).values_list('id', flat=True))
 
             val: BaseModel
-
-            if method == 1:
-                get_subobj = lambda: get_subobj_method_1(val, obj_fields, action, related_model, relatedmanager)
-
-            elif method == 2:
-                get_subobj = lambda: get_subobj_method_2(val, obj_fields, action, related_model, field)
-
             for val in value:
-                sub_obj = get_subobj()
+                sub_obj = get_subobj(val)
                 existing_object_ids.discard(sub_obj.id)
                 subobjects.append(sub_obj)
                 sub_transfer = transfer_to_orm(
@@ -312,6 +379,9 @@ def transfer_to_orm(
                 )
                 subobjects += sub_transfer[0]
                 existing_objects += sub_transfer[1]
+
+                if is_direct_m2m:
+                    many_to_many_objs[relatedmanager].append(sub_obj)
 
             existing_objects += related_model.objects.filter(id__in=list(existing_object_ids))
 
@@ -335,6 +405,13 @@ def transfer_to_orm(
             )
             if should_save(django_obj):
                 django_obj.save()
+
+            for manager, objs in many_to_many_objs.items():
+                for obj in objs:
+                    if should_save(obj):
+                        obj.save()
+
+                manager.set(objs)
 
             if action in (TransferAction.CREATE, TransferAction.SYNC):
                 if action == TransferAction.SYNC:
