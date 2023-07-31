@@ -1,6 +1,7 @@
 import warnings
 from typing import Any, Generator, Mapping, Optional, Tuple, Type, TypeVar, Union, Iterable
 from pydantic import BaseModel, validate_model
+from pydantic.error_wrappers import ErrorWrapper
 from django.db import models
 from django.db.models.manager import Manager
 from ... import context
@@ -89,5 +90,10 @@ def get_sync_matching_filter(model: BaseModel, django_model: Optional[Type[model
 
         else:
             raise ValueError('no_fields_for_matching_defined')
+
+    if not all(fields.values()):
+        raise RequestValidationError(
+            errors=[ErrorWrapper(ValueError('not_all_required_fields_for_matching_given'), '')],
+        )
 
     return models.Q(**fields)
