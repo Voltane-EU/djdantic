@@ -9,11 +9,7 @@ from ..fields import ORMFieldInfo, Field as ORMField
 TypingGenericAlias = type(Any)
 
 
-def _new_field_from_model_field(
-    field: ModelField,
-    default: Any = Undefined,
-    required: Optional[bool] = None
-):
+def _new_field_from_model_field(field: ModelField, default: Any = Undefined, required: Optional[bool] = None):
     if default is not Undefined:
         default = field.default
 
@@ -54,7 +50,18 @@ def to_optional(id_key: str = 'id'):
                     field: ModelField
                     fields = {}
                     for key, field in c.__fields__.items():
-                        field_type = optional_model(field.outer_type_, __module__=__module__, __parent__module__=__parent__module__)
+                        # TODO handle ForwardRef
+                        if field.shape == SHAPE_SINGLETON:
+                            field_type = optional_model(
+                                field.outer_type_,
+                                __module__=__module__,
+                                __parent__module__=__parent__module__,
+                            )
+
+                        else:
+                            # TODO pydantic.get_origin ??
+                            field_type = field.outer_type_
+
                         default = field.default
                         if key == id_key and not field.allow_none:
                             default = default or ...
@@ -113,6 +120,7 @@ class Reference(BaseModel):
 
 def include_reference(reference_key: str = '$rel', reference_params_key: str = '$rel_params'):
     recreated_models = {}
+
     def wrapped(cls: Type[BaseModel]):
         def model_with_rel(c: Type, __parent__: Type, __module__: str, __parent__module__: str):
             if isinstance(c, ForwardRef):
@@ -127,7 +135,9 @@ def include_reference(reference_key: str = '$rel', reference_params_key: str = '
                         fields[key] = (field.outer_type_, _new_field_from_model_field(field))
                         continue
 
-                    field_type, recreated_model = model_with_rel(field.type_, c, __module__=__module__, __parent__module__=__parent__module__)
+                    field_type, recreated_model = model_with_rel(
+                        field.type_, c, __module__=__module__, __parent__module__=__parent__module__
+                    )
                     if field.type_ != field.outer_type_:
                         field_type = getattr(typing, field.outer_type_._name)[field_type]
 
@@ -157,9 +167,21 @@ def include_reference(reference_key: str = '$rel', reference_params_key: str = '
                     else:
                         value = value_example = c._rel
 
-                    fields['x_reference_key'] = (str, Field(value, example=value_example, orm_field=None, alias=reference_key, default_factory=value_factory))
+                    fields['x_reference_key'] = (
+                        str,
+                        Field(
+                            value,
+                            example=value_example,
+                            orm_field=None,
+                            alias=reference_key,
+                            default_factory=value_factory,
+                        ),
+                    )
                     if c._rel_params:
-                        fields['x_reference_params_key'] = (dict, Field(alias=reference_params_key, orm_method=c._rel_params))
+                        fields['x_reference_params_key'] = (
+                            dict,
+                            Field(alias=reference_params_key, orm_method=c._rel_params),
+                        )
 
                 if recreate_model:
                     if c not in recreated_models:
