@@ -249,6 +249,9 @@ def transfer_to_orm(
                 )
 
     for key, field in pydantic_obj.__fields__.items():
+        if key == 'id':
+            continue
+
         orm_method = get_orm_field_attr(field.field_info, 'orm_method')
         if orm_method:
             if exclude_unset and key not in pydantic_values:
