@@ -45,6 +45,7 @@ def get_subobj_many_to_many(
     related_model: Type[models.Model],
     relatedmanager: models.Manager,
     force_create: bool = False,
+    allow_creation: bool = True,
 ):
     q_filter = models.Q()
     if getattr(val, 'id', None):
@@ -60,6 +61,9 @@ def get_subobj_many_to_many(
         return related_model.objects.get(q_filter)
 
     except related_model.DoesNotExist:
+        if not allow_creation:
+            raise
+
         return related_model()
 
 
@@ -214,8 +218,8 @@ def transfer_to_orm(
         warnings.warn("Use transfer_to_orm with kwarg action", category=DeprecationWarning)
 
     subobjects: List[models.Model] = created_submodels or []
-    existing_objects = []
-    many_to_many_objs = defaultdict(list)
+    objects_to_delete = []
+    many_to_many_objs: Dict[models.Manager, List[models.Model]] = {}
 
     if access:
         check_field_access(pydantic_obj, access)
@@ -248,7 +252,12 @@ def transfer_to_orm(
                     else None,
                 )
 
-    for key, field in pydantic_obj.__fields__.items():
+    fields = pydantic_obj.__fields__.items()
+    if exclude_unset:
+        # XXX: is filtering the fields at this point correct? Tests required
+        fields = [(key, field) for key, field in fields if key in pydantic_values]
+
+    for key, field in fields:
         if key == 'id':
             continue
 
@@ -290,7 +299,7 @@ def transfer_to_orm(
                         _just_return_objs=True,
                     )
                     subobjects += sub_transfer[0]
-                    existing_objects += sub_transfer[1]
+                    objects_to_delete += sub_transfer[1]
 
                 else:
                     raise NotImplementedError
@@ -315,7 +324,7 @@ def transfer_to_orm(
                 setattr(django_obj, orm_field.field.attname, value)
 
         elif field.shape == SHAPE_LIST:
-            if not value:
+            if value is None:
                 continue
 
             is_direct_m2m = False
@@ -333,6 +342,7 @@ def transfer_to_orm(
                         action=action,
                         related_model=related_model,
                         relatedmanager=relatedmanager,
+                        allow_creation=action in (TransferAction.CREATE, TransferAction.SYNC),
                     )
                     is_direct_m2m = True
 
@@ -363,10 +373,9 @@ def transfer_to_orm(
             else:
                 raise NotImplementedError
 
-            existing_object_ids = set()
-            if action == TransferAction.SYNC:
-                existing_object_ids = set(related_model.objects.filter(**obj_fields).values_list('id', flat=True))
+            existing_object_ids = set(related_model.objects.filter(**obj_fields).values_list('id', flat=True))
 
+            many_to_many_objs[relatedmanager] = []
             val: BaseModel
             for val in value:
                 sub_obj = get_subobj(val)
@@ -381,12 +390,13 @@ def transfer_to_orm(
                     _just_return_objs=True,
                 )
                 subobjects += sub_transfer[0]
-                existing_objects += sub_transfer[1]
+                objects_to_delete += sub_transfer[1]
 
                 if is_direct_m2m:
                     many_to_many_objs[relatedmanager].append(sub_obj)
 
-            existing_objects += related_model.objects.filter(id__in=list(existing_object_ids))
+            if not is_direct_m2m:
+                objects_to_delete += related_model.objects.filter(id__in=list(existing_object_ids))
 
         else:
             raise NotImplementedError
@@ -395,7 +405,7 @@ def transfer_to_orm(
         raise AssertionError('action is not defined but subobjects exist')
 
     if _just_return_objs:
-        return subobjects, existing_objects
+        return subobjects, objects_to_delete
 
     if (
         action in (TransferAction.CREATE, TransferAction.SYNC, TransferAction.NO_SUBOBJECTS)
@@ -416,11 +426,11 @@ def transfer_to_orm(
 
                 manager.set(objs)
 
-            if action in (TransferAction.CREATE, TransferAction.SYNC):
-                if action == TransferAction.SYNC:
-                    for obj in existing_objects:
-                        obj.delete()
+            if action in (TransferAction.SYNC, TransferAction.NO_SUBOBJECTS):
+                for obj in objects_to_delete:
+                    obj.delete()
 
+            if action in (TransferAction.CREATE, TransferAction.SYNC):
                 for obj in subobjects:
                     if should_save(obj):
                         obj.save()
