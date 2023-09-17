@@ -13,12 +13,14 @@ M = TypeVar('M', bound=models.Model)
 
 
 FIELD_TYPE = {
+    models.CharField: str,
+    models.SlugField: str,
+    models.TextField: str,
     models.AutoField: int,
     models.BigAutoField: int,
     models.BigIntegerField: int,
     models.BinaryField: bytes,
     models.BooleanField: bool,
-    models.CharField: str,
     models.DateField: date,
     models.DateTimeField: datetime,
     models.DecimalField: Decimal,
@@ -32,10 +34,8 @@ FIELD_TYPE = {
     models.PositiveBigIntegerField: int,
     models.PositiveIntegerField: int,
     models.PositiveSmallIntegerField: int,
-    models.SlugField: str,
     models.SmallAutoField: int,
     models.SmallIntegerField: int,
-    models.TextField: str,
     models.TimeField: time,
     models.URLField: str,
     models.UUIDField: UUID,
@@ -58,10 +58,12 @@ def with_typehint(baseclass: Type[T]) -> Type[T]:
 
 
 if not TYPE_CHECKING:
+
     class ManyToManyRelatedManager(Generic[M]):
         """
         Pydantic Compatible Generic Type for declaring a ManyToManyField
         """
+
         @classmethod
         def __get_validators__(cls):
             yield lambda v: v
