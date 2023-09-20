@@ -173,6 +173,7 @@ def transfer_to_orm(
     access: Optional[Access] = None,
     created_submodels: Optional[List[models.Model]] = None,
     _just_return_objs: bool = False,
+    _is_foreign_key: bool = False,
     do_not_save_if_no_change: bool = False,
 ) -> Optional[Tuple[List[models.Model], List[models.Model]]]:
     """
@@ -258,7 +259,7 @@ def transfer_to_orm(
         fields = [(key, field) for key, field in fields if key in pydantic_values]
 
     for key, field in fields:
-        if key == 'id':
+        if key == 'id' and not _is_foreign_key:
             continue
 
         orm_method = get_orm_field_attr(field.field_info, 'orm_method')
@@ -297,6 +298,7 @@ def transfer_to_orm(
                         access=access,
                         action=action,
                         _just_return_objs=True,
+                        _is_foreign_key=True,
                     )
                     subobjects += sub_transfer[0]
                     objects_to_delete += sub_transfer[1]
@@ -388,6 +390,7 @@ def transfer_to_orm(
                     access=access,
                     action=action,
                     _just_return_objs=True,
+                    _is_foreign_key=True,
                 )
                 subobjects += sub_transfer[0]
                 objects_to_delete += sub_transfer[1]
