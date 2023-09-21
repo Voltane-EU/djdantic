@@ -259,10 +259,13 @@ def transfer_to_orm(
 
     for key, field in fields:
         orm_field = get_orm_field_attr(field.field_info, 'orm_field')
-        if key == 'id' and orm_field.field.attname == key:
+        orm_method = get_orm_field_attr(field.field_info, 'orm_method')
+
+        if key == 'id' and \
+           (not orm_field or orm_field.field.attname == key) and \
+           not orm_method:
             continue
 
-        orm_method = get_orm_field_attr(field.field_info, 'orm_method')
         if orm_method:
             if exclude_unset and key not in pydantic_values:
                 continue
