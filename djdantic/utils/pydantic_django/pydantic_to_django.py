@@ -258,7 +258,8 @@ def transfer_to_orm(
         fields = [(key, field) for key, field in fields if key in pydantic_values]
 
     for key, field in fields:
-        if key == 'id':
+        orm_field = get_orm_field_attr(field.field_info, 'orm_field')
+        if key == 'id' and orm_field.field.attname == key:
             continue
 
         orm_method = get_orm_field_attr(field.field_info, 'orm_method')
@@ -276,7 +277,6 @@ def transfer_to_orm(
         if not is_orm_field_set(field.field_info):
             continue
 
-        orm_field = get_orm_field_attr(field.field_info, 'orm_field')
         if not orm_field and not (field.shape == SHAPE_SINGLETON and issubclass(field.type_, BaseModel)):
             raise AttributeError("orm_field not found on %r" % field)
 
