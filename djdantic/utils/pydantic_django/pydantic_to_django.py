@@ -4,7 +4,7 @@ from functools import partial
 from collections import defaultdict
 from enum import Enum
 from pydantic import BaseModel, validate_model, SecretStr, Field
-from pydantic.fields import SHAPE_SINGLETON, SHAPE_LIST, Undefined
+from pydantic.fields import SHAPE_SINGLETON, SHAPE_LIST, Undefined, UndefinedType
 from django.db import models
 from django.db.models.fields import Field as DjangoField
 from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
@@ -262,8 +262,13 @@ def transfer_to_orm(
         orm_method = get_orm_field_attr(field.field_info, 'orm_method')
 
         if key == 'id' and \
-           (not orm_field or orm_field.field.attname == key) and \
-           not orm_method:
+           (
+               (
+                   not orm_field or
+                   isinstance(orm_field, UndefinedType)
+               ) or
+               orm_field.field.attname == key
+           ) and not orm_method:
             continue
 
         if orm_method:
