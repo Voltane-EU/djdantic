@@ -1,23 +1,25 @@
 import json
-from decimal import Decimal
-from typing import Coroutine, Mapping, Optional, Type, Union, List
 from contextvars import ContextVar
-from django.db.models.query_utils import DeferredAttribute
-from pydantic import BaseModel, parse_obj_as
-from pydantic.fields import ModelField, SHAPE_SINGLETON, SHAPE_LIST, Undefined
-from pydantic.types import ConstrainedStr
-from django.db import models
-from django.db.models.manager import Manager
-from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
-from django.utils.functional import cached_property
-from sentry_tools.decorators import instrument_span
-from sentry_tools.span import set_tag, set_data
-from async_tools import is_async, sync_to_async
-from ...schemas import AccessScope
-from ...exceptions import AccessError
-from ... import context
-from ...fields import ORMFieldInfo
+from decimal import Decimal
+from typing import Coroutine, List, Mapping, Optional, Type, Union
 
+from async_tools import is_async, sync_to_async
+from django.db import models
+from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
+from django.db.models.manager import Manager
+from django.db.models.query_utils import DeferredAttribute
+from django.utils.functional import cached_property
+from pydantic import BaseModel, parse_obj_as
+from pydantic.fields import SHAPE_LIST, SHAPE_SINGLETON, ModelField, Undefined
+from pydantic.types import ConstrainedStr
+from pydantic.typing import get_origin, is_union
+from sentry_tools.decorators import instrument_span
+from sentry_tools.span import set_data, set_tag
+
+from ... import context
+from ...exceptions import AccessError
+from ...fields import ORMFieldInfo
+from ...schemas import AccessScope
 
 transfer_current_obj: ContextVar[models.Model] = ContextVar('transfer_current_obj')
 
@@ -96,16 +98,20 @@ def _compute_value_from_orm_method(
 
         elif field.shape == SHAPE_LIST:
             value = [
-                obj
-                if isinstance(obj, BaseModel)
-                else _transfer_from_orm(
-                    pydantic_cls=field.type_,
-                    django_obj=obj,
-                    django_parent_obj=django_obj,
-                    filter_submodel=filter_submodel,
+                (
+                    obj
+                    if isinstance(obj, BaseModel)
+                    else (
+                        _transfer_from_orm(
+                            pydantic_cls=field.type_,
+                            django_obj=obj,
+                            django_parent_obj=django_obj,
+                            filter_submodel=filter_submodel,
+                        )
+                        if isinstance(obj, models.Model)
+                        else field.type_.parse_obj(obj)
+                    )
                 )
-                if isinstance(obj, models.Model)
-                else field.type_.parse_obj(obj)
                 for obj in value
             ]
 
@@ -356,6 +362,9 @@ def _transfer_from_orm(
 
     values = {}
     field: ModelField
+    if is_union(get_origin(pydantic_cls)):
+        raise ValueError("cannot use union type on response model")
+
     for field in pydantic_cls.__fields__.values():
         try:
             value = _transfer_field(

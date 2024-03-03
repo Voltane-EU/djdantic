@@ -1,10 +1,15 @@
 import typing
-from typing import Callable, ForwardRef, Optional, Type, Any
 from types import FunctionType
-from pydantic import BaseModel, create_model, Field as Field
-from pydantic.fields import ModelField, FieldInfo, SHAPE_SINGLETON, SHAPE_LIST, Undefined
-from ..fields import ORMFieldInfo, Field as ORMField
+from typing import Any, Callable, ForwardRef, Optional, Type, Union
 
+from pydantic import BaseModel
+from pydantic import Field as Field
+from pydantic import create_model
+from pydantic.fields import SHAPE_LIST, SHAPE_SINGLETON, FieldInfo, ModelField, Undefined
+from pydantic.typing import get_origin, is_union
+
+from ..fields import Field as ORMField
+from ..fields import ORMFieldInfo
 
 TypingGenericAlias = type(Any)
 
@@ -125,6 +130,13 @@ def include_reference(reference_key: str = '$rel', reference_params_key: str = '
         def model_with_rel(c: Type, __parent__: Type, __module__: str, __parent__module__: str):
             if isinstance(c, ForwardRef):
                 return c, False
+
+            if is_union(get_origin(c)):
+                models = [
+                    model_with_rel(m, c, __module__=__module__, __parent__module__=__parent__module__)
+                    for m in c.__args__
+                ]
+                return Union[(m[0] for m in models)], any(m[1] for m in models)
 
             if issubclass(c, BaseModel):
                 field: ModelField
