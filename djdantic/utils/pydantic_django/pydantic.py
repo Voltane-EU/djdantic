@@ -1,11 +1,13 @@
 import warnings
-from typing import Any, Generator, Mapping, Optional, Tuple, Type, TypeVar, Union, Iterable
-from pydantic import BaseModel, validate_model
-from pydantic.error_wrappers import ErrorWrapper
+from typing import Any, Dict, Generator, Iterable, Mapping, Optional, Tuple, Type, TypeVar, Union
+
 from django.db import models
 from django.db.models.manager import Manager
+from pydantic import BaseModel, Field, validate_model
+from pydantic.error_wrappers import ErrorWrapper
+
 from ... import context
-from ..pydantic import get_orm_field_attr
+from ..pydantic import Reference, get_orm_field_attr
 from .django_to_pydantic import transfer_from_orm
 
 try:
@@ -73,7 +75,41 @@ def get_sync_matching_values(
         yield (orm_field, getattr(model, name))
 
 
-def get_sync_matching_filter(model: BaseModel, django_model: Optional[Type[models.Model]] = None) -> models.Q:
+def get_sync_matching_filter(
+    model: BaseModel,
+    django_model: Optional[Type[models.Model]] = None,
+    field: Optional[Field] = None,
+    obj_fields: Optional[Dict[str, models.Model]] = None,
+) -> models.Q:
+    # Legacy sync_matching handling
+    if field and (
+        sync_matching := get_orm_field_attr(
+            field.field_info,
+            'sync_matching',
+        )
+    ):
+        if isinstance(sync_matching, list):
+            matching_search = models.Q()
+            pydantic_field_name: str
+            match_orm_field: models.Field
+            for pydantic_field_name, match_orm_field in sync_matching:
+                match_value = model
+                for _field in pydantic_field_name.split('.'):
+                    match_value = getattr(match_value, _field)
+
+                if isinstance(match_value, Reference):
+                    match_value = match_value.id
+
+                matching_search &= models.Q(**{match_orm_field.field.attname: match_value})
+
+            return models.Q(**obj_fields) & matching_search
+
+        elif isinstance(sync_matching, callable):
+            raise NotImplementedError
+
+        else:
+            raise NotImplementedError
+
     fields = {field.field.name: value for field, value in get_sync_matching_values(model)} or (
         {'id': model.id} if model.id else {}
     )

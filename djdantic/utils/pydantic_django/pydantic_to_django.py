@@ -1,21 +1,23 @@
 import warnings
-from typing import Callable, List, Optional, Tuple, Type, Dict
-from functools import partial
 from collections import defaultdict
 from enum import Enum
-from pydantic import BaseModel, validate_model, SecretStr, Field
-from pydantic.fields import SHAPE_SINGLETON, SHAPE_LIST, Undefined, UndefinedType
+from functools import partial
+from typing import Callable, Dict, List, Optional, Tuple, Type
+
+from async_tools import is_async, sync_to_async
 from django.db import models
 from django.db.models.fields import Field as DjangoField
 from django.db.models.fields.related_descriptors import ManyToManyDescriptor, ReverseManyToOneDescriptor
 from django.db.transaction import atomic
+from pydantic import BaseModel, Field, SecretStr, validate_model
+from pydantic.fields import SHAPE_LIST, SHAPE_SINGLETON, Undefined, UndefinedType
 from sentry_tools.decorators import instrument_span
-from sentry_tools.span import set_tag, set_data
-from async_tools import is_async, sync_to_async
+from sentry_tools.span import set_data, set_tag
+
 from ...schemas import Access
 from ..pydantic import Reference, get_orm_field_attr, is_orm_field_set
-from .pydantic import get_sync_matching_filter
 from .checks import check_field_access
+from .pydantic import get_sync_matching_filter
 
 try:
     from dirtyfields import DirtyFieldsMixin
@@ -111,8 +113,14 @@ def get_subobj_rev_many_to_one(
     field: Field,
     force_create: bool = False,
 ):
-    matching = get_orm_field_attr(field.field_info, 'sync_matching')  # TODO replace with get_sync_matching_filter(val)
-    if action == TransferAction.SYNC and not getattr(val, 'id', None) and not matching:
+    q_filter = models.Q()
+    if getattr(val, 'id', None):
+        q_filter &= models.Q(**{'pk': val.id})
+
+    elif matching := get_sync_matching_filter(val, related_model, field, obj_fields):
+        q_filter &= matching
+
+    if action == TransferAction.SYNC and not getattr(val, 'id', None) and not q_filter:
         force_create = True
 
     if force_create or action == TransferAction.CREATE:
@@ -127,28 +135,8 @@ def get_subobj_rev_many_to_one(
             if getattr(val, 'id', None):
                 return related_model.objects.get(id=val.id, **obj_fields)
 
-            elif matching:
-                if isinstance(matching, list):
-                    matching_search = models.Q()
-                    pydantic_field_name: str
-                    match_orm_field: models.Field
-                    for pydantic_field_name, match_orm_field in matching:
-                        match_value = val
-                        for _field in pydantic_field_name.split('.'):
-                            match_value = getattr(match_value, _field)
-
-                        if isinstance(match_value, Reference):
-                            match_value = match_value.id
-
-                        matching_search &= models.Q(**{match_orm_field.field.attname: match_value})
-
-                    return related_model.objects.filter(**obj_fields).get(matching_search)
-
-                elif isinstance(matching, callable):
-                    raise NotImplementedError
-
-                else:
-                    raise NotImplementedError
+            elif q_filter:
+                return related_model.objects.filter(**obj_fields).get(q_filter)
 
             else:
                 raise NotImplementedError
@@ -247,9 +235,11 @@ def transfer_to_orm(
                 setattr(
                     django_obj,
                     orm_field.field.attname,
-                    field.field_info.default
-                    if field.field_info.default is not Undefined and field.field_info.default is not ...
-                    else None,
+                    (
+                        field.field_info.default
+                        if field.field_info.default is not Undefined and field.field_info.default is not ...
+                        else None
+                    ),
                 )
 
     fields = pydantic_obj.__fields__.items()
@@ -261,14 +251,11 @@ def transfer_to_orm(
         orm_field = get_orm_field_attr(field.field_info, 'orm_field')
         orm_method = get_orm_field_attr(field.field_info, 'orm_method')
 
-        if key == 'id' and \
-           (
-               (
-                   not orm_field or
-                   isinstance(orm_field, UndefinedType)
-               ) or
-               orm_field.field.attname == key
-           ) and not orm_method:
+        if (
+            key == 'id'
+            and ((not orm_field or isinstance(orm_field, UndefinedType)) or orm_field.field.attname == key)
+            and not orm_method
+        ):
             continue
 
         if orm_method:
