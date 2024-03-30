@@ -114,11 +114,16 @@ def get_subobj_rev_many_to_one(
     force_create: bool = False,
 ):
     q_filter = models.Q()
-    if getattr(val, 'id', None):
-        q_filter &= models.Q(**{'pk': val.id})
+    try:
+        if getattr(val, 'id', None):
+            q_filter &= models.Q(**{'pk': val.id})
 
-    elif matching := get_sync_matching_filter(val, related_model, field, obj_fields):
-        q_filter &= matching
+        elif matching := get_sync_matching_filter(val, related_model, field, obj_fields):
+            q_filter &= matching
+
+    except ValueError:
+        # its okay to have no_fields_for_matching_defined
+        pass
 
     if action == TransferAction.SYNC and not getattr(val, 'id', None) and not q_filter:
         force_create = True

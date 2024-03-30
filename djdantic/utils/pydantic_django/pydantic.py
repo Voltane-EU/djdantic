@@ -111,7 +111,7 @@ def get_sync_matching_filter(
             raise NotImplementedError
 
     fields = {field.field.name: value for field, value in get_sync_matching_values(model)} or (
-        {'id': model.id} if model.id else {}
+        {'id': model.id} if getattr(model, 'id', None) else {}
     )
 
     if not fields:
