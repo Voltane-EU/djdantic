@@ -1,4 +1,5 @@
 import typing
+from functools import cache
 from types import FunctionType
 from typing import Any, Callable, ForwardRef, Optional, Type, Union
 
@@ -12,6 +13,8 @@ from ..fields import Field as ORMField
 from ..fields import ORMFieldInfo
 
 TypingGenericAlias = type(Any)
+
+_recreated_models = {}
 
 
 def _new_field_from_model_field(field: ModelField, default: Any = Undefined, required: Optional[bool] = None):
@@ -47,51 +50,59 @@ class OptionalModel(BaseModel):
     pass
 
 
-def to_optional(id_key: str = 'id'):
-    def wrapped(cls: Type[BaseModel]):
-        def optional_model(c, __module__: str, __parent__module__: str):
-            try:
-                if issubclass(c, BaseModel):
-                    field: ModelField
-                    fields = {}
-                    for key, field in c.__fields__.items():
-                        # TODO handle ForwardRef
-                        if field.shape == SHAPE_SINGLETON:
-                            field_type = optional_model(
-                                field.outer_type_,
-                                __module__=__module__,
-                                __parent__module__=__parent__module__,
-                            )
-
-                        else:
-                            # TODO pydantic.get_origin ??
-                            field_type = field.outer_type_
-
-                        default = field.default
-                        if key == id_key and not field.allow_none:
-                            default = default or ...
-
-                        elif not field.allow_none:
-                            field_type = Optional[field_type]
-
-                        elif field.required:
-                            default = default or ...
-
-                        fields[key] = (field_type, _new_field_from_model_field(field, default, required=False))
-
-                    return create_model(
-                        f'{c.__qualname__} [O]',
-                        __base__=(c, OptionalModel),
-                        __module__=c.__module__ if c.__module__ != __parent__module__ else __module__,
-                        **fields,
+@cache
+def optional_model(c, __module__: str, __parent__module__: str, id_key: str):
+    try:
+        if issubclass(c, BaseModel):
+            field: ModelField
+            fields = {}
+            for key, field in c.__fields__.items():
+                # TODO handle ForwardRef
+                if field.shape == SHAPE_SINGLETON:
+                    field_type = optional_model(
+                        field.outer_type_,
+                        __module__=__module__,
+                        __parent__module__=__parent__module__,
                     )
 
-            except TypeError:
-                pass
+                else:
+                    # TODO pydantic.get_origin ??
+                    field_type = field.outer_type_
 
-            return c
+                default = field.default
+                if key == id_key and not field.allow_none:
+                    default = default or ...
 
-        return optional_model(cls, __module__=cls.__module__, __parent__module__=cls.__base__.__module__)
+                elif not field.allow_none:
+                    field_type = Optional[field_type]
+
+                elif field.required:
+                    default = default or ...
+
+                fields[key] = (field_type, _new_field_from_model_field(field, default, required=False))
+
+            return create_model(
+                f'{c.__qualname__} [O]',
+                __base__=(c, OptionalModel),
+                __module__=c.__module__ if c.__module__ != __parent__module__ else __module__,
+                **fields,
+            )
+
+    except TypeError:
+        pass
+
+    return c
+
+
+def to_optional(id_key: str = 'id'):
+    def wrapped(cls: Type[BaseModel]):
+
+        return optional_model(
+            cls,
+            __module__=cls.__module__,
+            __parent__module__=cls.__base__.__module__,
+            id_key=id_key,
+        )
 
     return wrapped
 
@@ -124,8 +135,6 @@ class Reference(BaseModel):
 
 
 def include_reference(reference_key: str = '$rel', reference_params_key: str = '$rel_params'):
-    recreated_models = {}
-
     def wrapped(cls: Type[BaseModel]):
         def model_with_rel(c: Type, __parent__: Type, __module__: str, __parent__module__: str):
             if isinstance(c, ForwardRef):
@@ -196,19 +205,19 @@ def include_reference(reference_key: str = '$rel', reference_params_key: str = '
                         )
 
                 if recreate_model:
-                    if c not in recreated_models:
-                        recreated_models[c] = create_model(
+                    if c not in _recreated_models:
+                        _recreated_models[c] = create_model(
                             f'{c.__qualname__} [R]',
                             __base__=(c, ReferencedModel),
                             __module__=c.__module__ if c.__module__ != __parent__module__ else __module__,
                             **fields,
                         )
-                        recreated_models[c].__recreated__ = True
+                        _recreated_models[c].__recreated__ = True
 
                     if __parent__:
-                        setattr(__parent__, c.__name__, recreated_models[c])
+                        setattr(__parent__, c.__name__, _recreated_models[c])
 
-                    return recreated_models[c], True
+                    return _recreated_models[c], True
 
             return c, False
 
