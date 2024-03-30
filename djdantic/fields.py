@@ -1,11 +1,13 @@
-from typing import Any, Callable, List, Tuple, Union, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union
+
+from django.db import models
+from django.db.models.fields import Field as DjangoField
 from pydantic.fields import FieldInfo, Undefined, UndefinedType
 from pydantic.typing import NoArgAnyCallable
-from django.db.models.fields import Field as DjangoField
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
+    from typing_extensions import Self
 
 
 class ORMFieldInfo(FieldInfo):
@@ -20,7 +22,9 @@ class ORMFieldInfo(FieldInfo):
 
     def __init__(self, default: Any = Undefined, **kwargs: Any) -> None:
         self.orm_field: Optional[Union[DjangoField, UndefinedType]] = kwargs.pop('orm_field', None)
-        self.orm_method: Optional[Union[Callable[['Self'], Any], Callable[['Self', Any], None]]] = kwargs.pop('orm_method', None)
+        self.orm_method: Optional[Union[Callable[['Self'], Any], Callable[['Self', Any], None]]] = kwargs.pop(
+            'orm_method', None
+        )
         self.scopes: Optional[List[str]] = kwargs.pop('scopes', None)
         self.is_critical: bool = kwargs.pop('is_critical', False)
         self.sync_matching: Optional[List[Tuple[str, DjangoField]]] = kwargs.pop('sync_matching', None)
@@ -63,6 +67,10 @@ def Field(
     is_sync_matching_field: bool = False,
     **extra: Any,
 ) -> Any:
+    if orm_field and isinstance(orm_field, models.CharField):
+        if not max_length:
+            max_length = orm_field.max_length
+
     field_info = ORMFieldInfo(
         default,
         default_factory=default_factory,

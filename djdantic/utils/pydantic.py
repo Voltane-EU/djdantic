@@ -1,3 +1,4 @@
+import logging
 import typing
 from functools import cache
 from types import FunctionType
@@ -12,9 +13,12 @@ from pydantic.typing import get_origin, is_union
 from ..fields import Field as ORMField
 from ..fields import ORMFieldInfo
 
+_logger = logging.getLogger(__name__)
+
 TypingGenericAlias = type(Any)
 
 _recreated_models = {}
+_optional_models = {}
 
 
 def _new_field_from_model_field(field: ModelField, default: Any = Undefined, required: Optional[bool] = None):
@@ -50,10 +54,12 @@ class OptionalModel(BaseModel):
     pass
 
 
-@cache
 def optional_model(c, __module__: str, __parent__module__: str, id_key: str):
     try:
         if issubclass(c, BaseModel):
+            if c in _optional_models:
+                return _optional_models[c]
+
             field: ModelField
             fields = {}
             for key, field in c.__fields__.items():
@@ -63,6 +69,7 @@ def optional_model(c, __module__: str, __parent__module__: str, id_key: str):
                         field.outer_type_,
                         __module__=__module__,
                         __parent__module__=__parent__module__,
+                        id_key=id_key,
                     )
 
                 else:
@@ -81,14 +88,17 @@ def optional_model(c, __module__: str, __parent__module__: str, id_key: str):
 
                 fields[key] = (field_type, _new_field_from_model_field(field, default, required=False))
 
-            return create_model(
+            _logger.debug("Optional Model %s", c)
+            _optional_models[c] = create_model(
                 f'{c.__qualname__} [O]',
                 __base__=(c, OptionalModel),
                 __module__=c.__module__ if c.__module__ != __parent__module__ else __module__,
                 **fields,
             )
 
-    except TypeError:
+            return _optional_models[c]
+
+    except TypeError as error:
         pass
 
     return c
@@ -206,6 +216,11 @@ def include_reference(reference_key: str = '$rel', reference_params_key: str = '
 
                 if recreate_model:
                     if c not in _recreated_models:
+                        _logger.debug(
+                            "Recreate Model %s (in module %s)",
+                            c,
+                            c.__module__ if c.__module__ != __parent__module__ else __module__,
+                        )
                         _recreated_models[c] = create_model(
                             f'{c.__qualname__} [R]',
                             __base__=(c, ReferencedModel),
