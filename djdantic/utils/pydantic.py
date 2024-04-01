@@ -7,8 +7,7 @@ from typing import Any, Callable, ForwardRef, Optional, Type, Union
 from pydantic import BaseModel
 from pydantic import Field as Field
 from pydantic import create_model
-from pydantic.fields import (SHAPE_LIST, SHAPE_SINGLETON, FieldInfo,
-                             ModelField, Undefined)
+from pydantic.fields import SHAPE_LIST, SHAPE_SINGLETON, FieldInfo, ModelField, Undefined
 from pydantic.typing import get_origin, is_union
 
 from ..fields import Field as ORMField
@@ -99,7 +98,7 @@ def id_added_model(
                     _new_field_from_model_field(field),
                 )
 
-            fields['id'] = ((Optional[str], ORMField(orm_field=django_model.id if django_model else Undefined)),)
+            fields['id'] = (Optional[str], ORMField(orm_field=django_model.id if django_model else Undefined))
 
             _logger.debug("ID Added Model %s", cls)
             _id_added_models[cls] = create_model(
