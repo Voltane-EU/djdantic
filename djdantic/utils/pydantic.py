@@ -7,7 +7,8 @@ from typing import Any, Callable, ForwardRef, Optional, Type, Union
 from pydantic import BaseModel
 from pydantic import Field as Field
 from pydantic import create_model
-from pydantic.fields import SHAPE_LIST, SHAPE_SINGLETON, FieldInfo, ModelField, Undefined
+from pydantic.fields import (SHAPE_LIST, SHAPE_SINGLETON, FieldInfo,
+                             ModelField, Undefined)
 from pydantic.typing import get_origin, is_union
 
 from ..fields import Field as ORMField
@@ -19,6 +20,7 @@ TypingGenericAlias = type(Any)
 
 _recreated_models = {}
 _optional_models = {}
+_id_added_models = {}
 
 
 def _new_field_from_model_field(field: ModelField, default: Any = Undefined, required: Optional[bool] = None):
@@ -50,19 +52,89 @@ def _new_field_from_model_field(field: ModelField, default: Any = Undefined, req
     )
 
 
+class IdAddedModel(BaseModel):
+    pass
+
+
+def id_added_model(
+    cls,
+    __module__: Optional[str] = None,
+    __parent__module__: Optional[str] = None,
+):
+    if not __module__:
+        __module__ = cls.__module__
+    if not __parent__module__:
+        __parent__module__ = cls.__base__.__module__
+
+    try:
+        if issubclass(cls, BaseModel):
+            if 'id' in cls.__fields__:
+                return cls
+
+            if cls in _id_added_models:
+                return _id_added_models[cls]
+
+            django_model = getattr(cls, '_orm_model', None)
+
+            field: ModelField
+            fields = {}
+            for key, field in cls.__fields__.items():
+                # TODO handle ForwardRef
+                if field.shape in (SHAPE_SINGLETON, SHAPE_LIST):
+                    field_type = id_added_model(
+                        field.type_,
+                        __module__=__module__,
+                        __parent__module__=__parent__module__,
+                    )
+
+                    if field.type_ != field.outer_type_:
+                        field_type = getattr(typing, field.outer_type_._name)[field_type]
+
+                else:
+                    # TODO pydantic.get_origin ??
+                    field_type = field.outer_type_
+
+                fields[key] = (
+                    field_type,
+                    _new_field_from_model_field(field),
+                )
+
+            fields['id'] = ((Optional[str], ORMField(orm_field=django_model.id if django_model else Undefined)),)
+
+            _logger.debug("ID Added Model %s", cls)
+            _id_added_models[cls] = create_model(
+                f'{cls.__qualname__} [ID]',
+                __base__=(cls, IdAddedModel),
+                __module__=cls.__module__ if cls.__module__ != __parent__module__ else __module__,
+                **fields,
+            )
+
+            return _id_added_models[cls]
+
+    except TypeError as error:
+        _logger.warning("TypeError when handling id_added_model: %s", error, exc_info=True, stack_info=True)
+
+    return cls
+
+
 class OptionalModel(BaseModel):
     pass
 
 
-def optional_model(c, __module__: str, __parent__module__: str, id_key: str):
+def optional_model(cls, __module__: Optional[str] = None, __parent__module__: Optional[str] = None, id_key: str = 'id'):
+    if not __module__:
+        __module__ = cls.__module__
+    if not __parent__module__:
+        __parent__module__ = cls.__base__.__module__
+
     try:
-        if issubclass(c, BaseModel):
-            if c in _optional_models:
-                return _optional_models[c]
+        if issubclass(cls, BaseModel):
+            if cls in _optional_models:
+                return _optional_models[cls]
 
             field: ModelField
             fields = {}
-            for key, field in c.__fields__.items():
+            for key, field in cls.__fields__.items():
                 # TODO handle ForwardRef
                 if field.shape == SHAPE_SINGLETON:
                     field_type = optional_model(
@@ -88,20 +160,20 @@ def optional_model(c, __module__: str, __parent__module__: str, id_key: str):
 
                 fields[key] = (field_type, _new_field_from_model_field(field, default, required=False))
 
-            _logger.debug("Optional Model %s", c)
-            _optional_models[c] = create_model(
-                f'{c.__qualname__} [O]',
-                __base__=(c, OptionalModel),
-                __module__=c.__module__ if c.__module__ != __parent__module__ else __module__,
+            _logger.debug("Optional Model %s", cls)
+            _optional_models[cls] = create_model(
+                f'{cls.__qualname__} [O]',
+                __base__=(cls, OptionalModel),
+                __module__=cls.__module__ if cls.__module__ != __parent__module__ else __module__,
                 **fields,
             )
 
-            return _optional_models[c]
+            return _optional_models[cls]
 
     except TypeError as error:
-        pass
+        _logger.warning("TypeError when handling optional_model: %s", error, exc_info=True, stack_info=True)
 
-    return c
+    return cls
 
 
 def to_optional(id_key: str = 'id'):
@@ -249,7 +321,7 @@ def is_orm_field_set(field: FieldInfo) -> bool:
 
     else:
         orm_field = field.extra.get('orm_field')
-        if 'orm_field' in field.extra and field.extra['orm_field'] is None:
+        if 'orm_field' not in field.extra or ('orm_field' in field.extra and field.extra['orm_field'] is None):
             # Do not raise error when orm_field was explicitly set to None
             return False
 
