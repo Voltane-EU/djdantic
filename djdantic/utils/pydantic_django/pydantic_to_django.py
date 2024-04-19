@@ -274,7 +274,9 @@ def transfer_to_orm(
             orm_method(django_obj, value)
             continue
 
-        if not is_orm_field_set(field.field_info):
+        if not is_orm_field_set(field.field_info) and not (
+            field.shape == SHAPE_SINGLETON and issubclass(field.type_, BaseModel)
+        ):
             continue
 
         if not orm_field and not (field.shape == SHAPE_SINGLETON and issubclass(field.type_, BaseModel)):
