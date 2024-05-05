@@ -93,6 +93,9 @@ def id_added_model(
                     # TODO pydantic.get_origin ??
                     field_type = field.outer_type_
 
+                if field.allow_none:
+                    field_type = Optional[field_type]
+
                 fields[key] = (
                     field_type,
                     _new_field_from_model_field(field),
