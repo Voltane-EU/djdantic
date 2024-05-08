@@ -129,11 +129,7 @@ def get_subobj_rev_many_to_one(
         force_create = True
 
     if force_create or action == TransferAction.CREATE:
-        create_fields = {}
-        if getattr(val, 'id', None):
-            create_fields['id'] = getattr(val, 'id', None)
-
-        return related_model(**obj_fields, **create_fields)
+        return related_model(**obj_fields)
 
     elif action == TransferAction.SYNC:
         try:
